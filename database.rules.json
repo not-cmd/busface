@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "parentCredentials": {
+      ".read": true,
+      ".write": true
+    },
+    "staffCredentials": {
+      ".read": true,
+      ".write": true
+    },
+    "$other": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}

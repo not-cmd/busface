@@ -1,0 +1,98 @@
+
+{
+    "bus_01": {
+        "busId": "bus_01",
+        "name": "Bus-01 (Zone - 1)",
+        "driver": {
+            "name": "Rajesh Patel",
+            "experience": "8 years",
+            "contact": "+91 98765 43210",
+            "photoUrl": "https://placehold.co/100x100.png",
+            "rcUrl": "https://placehold.co/400x250.png",
+            "safetyScore": {
+                "daily": 100,
+                "average": 100
+            }
+        },
+        "registrationNumber": "MH02AB1234",
+        "capacity": 30,
+        "studentsOnBoard": 25,
+        "status": "On Route"
+    },
+    "bus_02": {
+        "busId": "bus_02",
+        "name": "Bus-02 (Zone - 2)",
+        "driver": {
+            "name": "Suresh Kumar",
+            "experience": "5 years",
+            "contact": "+91 98765 43211",
+            "photoUrl": "https://placehold.co/100x100.png",
+            "rcUrl": "https://placehold.co/400x250.png",
+            "safetyScore": {
+                "daily": 100,
+                "average": 100
+            }
+        },
+        "registrationNumber": "MH02CD5678",
+        "capacity": 25,
+        "studentsOnBoard": 25,
+        "status": "Idle"
+    },
+    "bus_03": {
+        "busId": "bus_03",
+        "name": "Bus-03 (Zone - 3)",
+        "driver": {
+            "name": "Manoj Singh",
+            "experience": "10 years",
+            "contact": "+91 98765 43212",
+            "photoUrl": "https://placehold.co/100x100.png",
+            "rcUrl": "https://placehold.co/400x250.png",
+            "safetyScore": {
+                "daily": 100,
+                "average": 100
+            }
+        },
+        "registrationNumber": "MH02EF9012",
+        "capacity": 30,
+        "studentsOnBoard": 18,
+        "status": "On Route"
+    },
+    "bus_04": {
+        "busId": "bus_04",
+        "name": "Bus-04 (Zone - 4)",
+        "driver": {
+            "name": "Priya Sharma",
+            "experience": "4 years",
+            "contact": "+91 98765 43213",
+            "photoUrl": "https://placehold.co/100x100.png",
+            "rcUrl": "https://placehold.co/400x250.png",
+            "safetyScore": {
+                "daily": 100,
+                "average": 100
+            }
+        },
+        "registrationNumber": "MH02GH3456",
+        "capacity": 35,
+        "studentsOnBoard": 32,
+        "status": "Maintenance"
+    },
+    "bus_05": {
+        "busId": "bus_05",
+        "name": "Bus-05 (Zone - 5)",
+        "driver": {
+            "name": "Amit Verma",
+            "experience": "6 years",
+            "contact": "+91 98765 43214",
+            "photoUrl": "https://placehold.co/100x100.png",
+            "rcUrl": "https://placehold.co/400x250.png",
+            "safetyScore": {
+                "daily": 100,
+                "average": 100
+            }
+        },
+        "registrationNumber": "MH02IJ7890",
+        "capacity": 30,
+        "studentsOnBoard": 28,
+        "status": "On Route"
+    }
+}

@@ -1,0 +1,27 @@
+
+{
+    "2024-07-28": {
+        "60018230067": { "status": "Present", "entry": "08:15 AM", "exit": "04:30 PM" },
+        "60018230068": { "status": "Present", "entry": "08:22 AM", "exit": "04:40 PM" },
+        "60018230069": { "status": "Absent", "entry": null, "exit": null },
+        "60018230070": { "status": "Present", "entry": "08:10 AM", "exit": "04:25 PM" }
+    },
+    "2024-07-29": {
+        "60018230067": { "status": "Present", "entry": "08:12 AM", "exit": "04:28 PM" },
+        "60018230068": { "status": "Absent", "entry": null, "exit": null },
+        "60018230069": { "status": "Present", "entry": "08:18 AM", "exit": "04:35 PM" },
+        "60018230070": { "status": "Present", "entry": "08:08 AM", "exit": "04:22 PM" }
+    },
+    "2024-07-30": {
+        "60018230067": { "status": "Absent", "entry": null, "exit": null },
+        "60018230068": { "status": "Present", "entry": "08:20 AM", "exit": "04:38 PM" },
+        "60018230069": { "status": "Present", "entry": "08:16 AM", "exit": "04:33 PM" },
+        "60018230070": { "status": "Present", "entry": "08:11 AM", "exit": "04:26 PM" }
+    },
+    "2024-07-31": {
+        "60018230067": { "status": "Present", "entry": "08:14 AM", "exit": "04:29 PM" },
+        "60018230068": { "status": "Present", "entry": "08:21 AM", "exit": "04:39 PM" },
+        "60018230069": { "status": "Present", "entry": "08:17 AM", "exit": "04:34 PM" },
+        "60018230070": { "status": "Absent", "entry": null, "exit": null }
+    }
+}
