@@ -15,6 +15,8 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '10mb', // Increase from default 1MB to 10MB for image processing
     },
   },
+  // Optimize output
+  output: 'standalone',
   async headers() {
     return [
       {

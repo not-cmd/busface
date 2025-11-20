@@ -12,7 +12,6 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
-import busData from '@/lib/buses.json';
 import type { StudentJson as StudentType, StudentStatus } from '@/lib/data';
 import { SpeedTracker } from '@/components/dashboard/speed-tracker';
 import { FacialRecognitionFeed } from '@/components/dashboard/facial-recognition-feed';
@@ -49,6 +48,7 @@ export default function BusStaffDashboard() {
   const [onBoardCount, setOnBoardCount] = useState(0);
   const [sessionTakenOver, setSessionTakenOver] = useState(false);
   const [isPrimarySession, setIsPrimarySession] = useState(true);
+  const [currentBus, setCurrentBus] = useState<any>(null);
 
   const getAttendanceRef = useCallback((studentId: string) => {
     const today = format(new Date(), 'yyyy-MM-dd');
@@ -74,6 +74,14 @@ export default function BusStaffDashboard() {
     setStaffName(loggedInStaffId);
     setBusId(loggedInBusId);
     setIsPrimarySession(isPrimary);
+
+    // Load bus data from Firebase
+    const busRef = ref(db, `buses/${loggedInBusId}`);
+    const unsubscribeBus = onValue(busRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setCurrentBus(snapshot.val());
+      }
+    });
 
     // Clean up stale sessions on mount
     cleanupStaleSessions(loggedInBusId);
@@ -153,6 +161,7 @@ export default function BusStaffDashboard() {
         }
         unsubscribeSession();
         clearInterval(activityInterval);
+        unsubscribeBus();
         
         // Clean up session on unmount
         if (sessionId && loggedInBusId && !sessionTakenOver) {
@@ -207,15 +216,13 @@ export default function BusStaffDashboard() {
     }
   }, [toast, getAttendanceRef]);
 
-  if (!busId) {
+  if (!busId || !currentBus) {
     return (
       <div className="flex items-center justify-center h-screen">
         <p>Loading staff data... If this persists, please log out and log back in.</p>
       </div>
     );
   }
-
-  const currentBus = busData[busId as keyof typeof busData];
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-muted/40">
