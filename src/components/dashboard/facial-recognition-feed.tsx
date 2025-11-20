@@ -61,6 +61,7 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
     const [detectedFaces, setDetectedFaces] = useState<Face[]>([]);
     const lastRecognitionTime = useRef<Record<string, number>>({});
     const lastToastTime = useRef<Record<string, number>>({});
+    const lastIntruderAlertTime = useRef<Record<string, number>>({}); // Track intruder alerts separately
     const [registeredFaces, setRegisteredFaces] = useState<RegisteredFace[]>([]);
     const [allStudents, setAllStudents] = useState<StudentType[]>([]);
     const [readyToScan, setReadyToScan] = useState(false);
@@ -304,9 +305,18 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
             } else if (face.name && face.isWrongBus) {
 
             } else if (!face.name || face.isPotentialMatch) {
+                // INTRUDER ALERT: Add client-side cooldown to prevent spam
+                const intruderCooldown = 5 * 60 * 1000; // 5 minutes cooldown per unique face
+                const lastAlertForThisFace = lastIntruderAlertTime.current[face.uid] || 0;
+                
+                if (now - lastAlertForThisFace < intruderCooldown) {
+                    console.log(`Skipping intruder alert for ${face.uid} - within cooldown period`);
+                    return; // Skip if we already alerted for this face recently
+                }
+                
                 const recentAlertsRef = dbRef(db, 'intruderAlerts');
                 
-                // Check for recent alerts with this face UID
+                // Check for recent alerts with this face UID in Firebase
                 const recentAlertsQuery = query(
                     recentAlertsRef,
                     orderByChild('faceUid'),
@@ -315,8 +325,8 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                 );
                 
                 const snapshot = await get(recentAlertsQuery);
-                const now = new Date();
-                const cooldownPeriod = 5 * 60 * 1000; // 5 minutes cooldown
+                const nowDate = new Date();
+                const firebaseCooldownPeriod = 5 * 60 * 1000; // 5 minutes cooldown
                 
                 let shouldCreateAlert = true;
                 
@@ -325,19 +335,23 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                     const lastAlertTime = new Date(recentAlert.timestamp);
                     
                     // Check cooldown period and similarity
-                    if (now.getTime() - lastAlertTime.getTime() < cooldownPeriod ||
+                    if (nowDate.getTime() - lastAlertTime.getTime() < firebaseCooldownPeriod ||
                         (face.matchConfidence && recentAlert.matchConfidence && 
                          Math.abs(face.matchConfidence - recentAlert.matchConfidence) < 0.1)) {
                         shouldCreateAlert = false;
+                        console.log('Skipping intruder alert - duplicate found in Firebase');
                     }
                 }
                 
                 if (shouldCreateAlert) {
+                    // Update client-side tracking
+                    lastIntruderAlertTime.current[face.uid] = now;
+                    
                     // Clean up old alerts (older than 24 hours)
                     const oldAlertsQuery = query(
                         recentAlertsRef,
                         orderByChild('timestamp'),
-                        endBefore(new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString())
+                        endBefore(new Date(nowDate.getTime() - 24 * 60 * 60 * 1000).toISOString())
                     );
                     
                     const oldAlerts = await get(oldAlertsQuery);
@@ -349,11 +363,11 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                         await update(recentAlertsRef, updates);
                     }
 
-                    // Create new alert
+                    // Create new alert - ONLY ONCE per unique face per cooldown period
                     const newIntruderRef = push(recentAlertsRef);
                     await set(newIntruderRef, {
                         snapshotUrl: snapshotDataUrl,
-                        timestamp: now.toISOString(),
+                        timestamp: nowDate.toISOString(),
                         faceUid: face.uid,
                         busId: busId,
                         matchConfidence: face.matchConfidence || 0,
@@ -361,7 +375,9 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                         potentialMatches: face.potentialMatches || []
                     });
 
-                    // Show appropriate toast based on match confidence
+                    console.log(`Intruder alert created for face ${face.uid} on bus ${busId}`);
+
+                    // Show appropriate toast based on match confidence - ONLY ONCE
                     if (face.isPotentialMatch) {
                         const potentialNames = face.potentialMatches?.map(m => m.name).join(', ');
                         throttledToast('potential-match', {
@@ -370,11 +386,11 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                             description: `This person looks similar to: ${potentialNames}. Please verify.`
                         }, 30000);
                     } else {
-                        throttledToast('intruder-alert', {
+                        throttledToast(`intruder-${face.uid}`, {
                             variant: 'destructive',
-                            title: `Unrecognized Person`,
-                            description: `Unknown person detected on Bus ${busId}. Snapshot saved.`
-                        }, 15000); // Only show once per 15 seconds
+                            title: `Intruder Detected`,
+                            description: `Unrecognized person detected on Bus ${busId}. Alert saved.`
+                        }, 30000); // Show once per unique face with longer cooldown
                     }
                 }
             }
