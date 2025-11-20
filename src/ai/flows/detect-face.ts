@@ -136,22 +136,42 @@ async function getFaceEmbeddings(face: tf.Tensor3D): Promise<tf.Tensor2D | null>
       // Combine all features
       const combined = tf.concat(featureMaps);
       
-      // Normalize the combined features
-      const normalized = tf.div(
-        tf.sub(combined, tf.mean(combined)),
-        tf.add(tf.moments(combined).variance.sqrt(), 1e-8)
-      );
+      // FIX: Ensure we always have exactly 512 dimensions
+      const targetSize = 512;
+      let resizedFeatures: tf.Tensor1D;
       
-      // Take first 512 dimensions for manageable embedding size
-      const embedding = normalized.slice([0], [Math.min(512, normalized.shape[0])]);
-      
-      // Pad to ensure consistent size if needed
-      if (embedding.shape[0] < 512) {
-        const padding = tf.zeros([512 - embedding.shape[0]]);
-        return tf.concat([embedding, padding]).expandDims(0) as tf.Tensor2D;
+      if (combined.shape[0] > targetSize) {
+        // If we have more features, truncate to 512
+        resizedFeatures = combined.slice([0], [targetSize]) as tf.Tensor1D;
+      } else if (combined.shape[0] < targetSize) {
+        // If we have fewer features, replicate and pad intelligently
+        const repetitions = Math.floor(targetSize / combined.shape[0]);
+        const remainder = targetSize % combined.shape[0];
+        
+        const repeated = [];
+        for (let i = 0; i < repetitions; i++) {
+          repeated.push(combined);
+        }
+        if (remainder > 0) {
+          repeated.push(combined.slice([0], [remainder]));
+        }
+        
+        resizedFeatures = tf.concat(repeated) as tf.Tensor1D;
+      } else {
+        resizedFeatures = combined as tf.Tensor1D;
       }
       
-      return embedding.expandDims(0) as tf.Tensor2D;
+      // Normalize the features AFTER ensuring correct size
+      const featureMean = tf.mean(resizedFeatures);
+      const featureVariance = tf.moments(resizedFeatures).variance;
+      const featureStd = tf.sqrt(tf.add(featureVariance, 1e-8));
+      
+      const normalized = tf.div(
+        tf.sub(resizedFeatures, featureMean),
+        featureStd
+      ) as tf.Tensor1D;
+      
+      return normalized.expandDims(0) as tf.Tensor2D;
     });
   } catch (error) {
     console.error('Error generating face embeddings:', error);

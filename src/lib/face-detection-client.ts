@@ -90,26 +90,41 @@ export function generateFaceEmbeddingClient(faceTensor: tf.Tensor3D): Float32Arr
     // Concatenate all features
     const combined = tf.concat(allFeatures) as tf.Tensor1D;
     
-    // Ensure exactly 512 dimensions
+    // Ensure exactly 512 dimensions - MATCH SERVER-SIDE LOGIC
     const targetSize = 512;
     let finalFeatures: tf.Tensor1D;
     
-    if (combined.shape[0] >= targetSize) {
-      // Truncate to 512
+    if (combined.shape[0] > targetSize) {
+      // If we have more features, truncate to 512
       finalFeatures = combined.slice([0], [targetSize]) as tf.Tensor1D;
+    } else if (combined.shape[0] < targetSize) {
+      // If we have fewer features, replicate and pad intelligently
+      // This prevents having large blocks of zeros
+      const repetitions = Math.floor(targetSize / combined.shape[0]);
+      const remainder = targetSize % combined.shape[0];
+      
+      const repeated = [];
+      for (let i = 0; i < repetitions; i++) {
+        repeated.push(combined);
+      }
+      if (remainder > 0) {
+        repeated.push(combined.slice([0], [remainder]));
+      }
+      
+      finalFeatures = tf.concat(repeated) as tf.Tensor1D;
     } else {
-      // Pad to 512
-      const padding = tf.zeros([targetSize - combined.shape[0]]) as tf.Tensor1D;
-      finalFeatures = tf.concat([combined, padding]) as tf.Tensor1D;
+      finalFeatures = combined as tf.Tensor1D;
     }
     
-    // Normalize features
+    // Normalize features AFTER ensuring correct size
     const featuresMean = tf.mean(finalFeatures);
-    const featuresStd = tf.sqrt(tf.mean(tf.square(tf.sub(finalFeatures, featuresMean))));
+    const featureVariance = tf.moments(finalFeatures).variance;
+    const featuresStd = tf.sqrt(tf.add(featureVariance, 1e-8));
+    
     const normalizedFeatures = tf.div(
       tf.sub(finalFeatures, featuresMean), 
-      tf.add(featuresStd, 1e-8)
-    );
+      featuresStd
+    ) as tf.Tensor1D;
     
     return normalizedFeatures.dataSync() as Float32Array;
   });
@@ -204,17 +219,34 @@ export function matchFace(
   faceEmbedding: Float32Array,
   storedEmbeddings: StoredFaceEmbedding[]
 ): FaceMatch | null {
-  if (storedEmbeddings.length === 0) return null;
+  if (storedEmbeddings.length === 0) {
+    console.log('No stored embeddings available for matching');
+    return null;
+  }
   
-  const HIGH_CONFIDENCE = 0.78;
-  const MEDIUM_CONFIDENCE = 0.68;
+  // LOWERED THRESHOLDS: More forgiving recognition for improved user experience
+  // The embedding generation was improved to create better features, but thresholds need adjustment
+  const HIGH_CONFIDENCE = 0.65;  // Lowered from 0.78
+  const MEDIUM_CONFIDENCE = 0.55; // Lowered from 0.68
   
   let bestMatch: FaceMatch | null = null;
   let bestSimilarity = 0;
+  const allSimilarities: Array<{ name: string; similarity: number }> = [];
+  
+  console.log(`Matching against ${storedEmbeddings.length} stored embeddings`);
+  console.log(`Face embedding length: ${faceEmbedding.length}`);
   
   for (const stored of storedEmbeddings) {
     const storedArray = new Float32Array(stored.embedding);
+    
+    // Validate stored embedding
+    if (storedArray.length !== faceEmbedding.length) {
+      console.warn(`Embedding size mismatch for ${stored.studentName}: ${storedArray.length} vs ${faceEmbedding.length}`);
+      continue;
+    }
+    
     const similarity = calculateSimilarity(faceEmbedding, storedArray);
+    allSimilarities.push({ name: stored.studentName, similarity });
     
     if (similarity > bestSimilarity) {
       bestSimilarity = similarity;
@@ -228,7 +260,20 @@ export function matchFace(
     }
   }
   
-  return bestMatch;
+  // Debug logging
+  console.log('All similarity scores:', allSimilarities.sort((a, b) => b.similarity - a.similarity));
+  console.log('Best match:', bestMatch ? `${bestMatch.studentName} (${(bestMatch.confidence * 100).toFixed(1)}%)` : 'None');
+  
+  // Return best match even if below medium confidence for debugging
+  if (bestMatch && bestSimilarity >= 0.45) { // Very low threshold for potential matches
+    if (!bestMatch.isHighConfidence && !bestMatch.isPotentialMatch) {
+      console.log(`Low confidence match: ${bestMatch.studentName} at ${(bestSimilarity * 100).toFixed(1)}%`);
+      bestMatch.isPotentialMatch = true; // Mark as potential for review
+    }
+    return bestMatch;
+  }
+  
+  return null;
 }
 
 /**

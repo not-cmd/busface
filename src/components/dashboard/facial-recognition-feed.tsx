@@ -67,6 +67,7 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
     const [readyToScan, setReadyToScan] = useState(false);
     const [storedEmbeddings, setStoredEmbeddings] = useState<StoredFaceEmbedding[]>([]);
     const [busDataState, setBusDataState] = useState<any>({});
+    const [embeddingsLoaded, setEmbeddingsLoaded] = useState(false);
 
     // Throttled toast function to prevent spam
     const throttledToast = useCallback((key: string, toastOptions: any, throttleTime = 5000) => {
@@ -103,17 +104,42 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                 for (const studentId in embeddingsData) {
                     const data = embeddingsData[studentId];
                     if (data.embedding && data.studentName) {
-                        embeddings.push({
-                            studentId: data.studentId || studentId,
-                            studentName: data.studentName,
-                            embedding: data.embedding,
-                        });
+                        // Validate embedding data
+                        const embeddingArray = Array.isArray(data.embedding) ? data.embedding : Array.from(data.embedding);
+                        const validEmbedding = embeddingArray.length === 512 && 
+                                              embeddingArray.some((v: number) => !isNaN(v) && isFinite(v));
+                        
+                        if (validEmbedding) {
+                            embeddings.push({
+                                studentId: data.studentId || studentId,
+                                studentName: data.studentName,
+                                embedding: embeddingArray,
+                            });
+                            console.log(`✓ Loaded embedding for ${data.studentName} (${embeddingArray.length} dimensions)`);
+                        } else {
+                            console.warn(`✗ Invalid embedding for ${data.studentName}:`, {
+                                length: embeddingArray.length,
+                                hasNaN: embeddingArray.some((v: number) => isNaN(v)),
+                                hasInfinite: embeddingArray.some((v: number) => !isFinite(v))
+                            });
+                        }
                     }
                 }
                 
                 setStoredEmbeddings(embeddings);
-                console.log(`Loaded ${embeddings.length} face embeddings for matching`);
+                setEmbeddingsLoaded(true);
+                console.log(`✓ Successfully loaded ${embeddings.length} valid face embeddings for matching`);
+                
+                if (embeddings.length === 0) {
+                    console.warn('⚠️ No valid embeddings found in database. Students need to register their faces.');
+                }
+            } else {
+                console.warn('⚠️ No faceEmbeddings node found in database');
+                setEmbeddingsLoaded(true);
             }
+        }).catch(error => {
+            console.error('✗ Error loading face embeddings:', error);
+            setEmbeddingsLoaded(true);
         });
 
         const registeredFacesRef = dbRef(db, 'registeredFaces');
@@ -513,6 +539,11 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                         const embedding = generateFaceEmbeddingClient(faceTensor);
                         faceTensor.dispose();
                         
+                        // Debug: Check embedding quality
+                        const nonZeroCount = Array.from(embedding).filter(v => Math.abs(v) > 0.01).length;
+                        const embeddingMean = Array.from(embedding).reduce((a, b) => a + b, 0) / embedding.length;
+                        console.log(`Generated embedding stats: length=${embedding.length}, nonZero=${nonZeroCount}, mean=${embeddingMean.toFixed(4)}`);
+                        
                         // Match against stored embeddings
                         const match = matchFace(embedding, storedEmbeddings);
                         
@@ -648,7 +679,7 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                         <Camera className="h-6 w-6 text-primary" />
                         <CardTitle>Facial Recognition</CardTitle>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                         <Badge variant={isScanning ? "default" : scanningEnabled ? "outline" : "secondary"}>
                             {isScanning ? "Active" : scanningEnabled ? "Starting..." : "Inactive"}
                         </Badge>
@@ -660,9 +691,24 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                                 Camera Ready
                             </Badge>
                         )}
+                        {embeddingsLoaded && (
+                            <Badge 
+                                variant={storedEmbeddings.length > 0 ? "default" : "destructive"}
+                                className={storedEmbeddings.length > 0 ? "bg-green-600" : ""}
+                            >
+                                {storedEmbeddings.length} Registered
+                            </Badge>
+                        )}
                     </div>
                 </div>
-                <CardDescription>Real-time student recognition and attendance tracking system.</CardDescription>
+                <CardDescription>
+                    Real-time student recognition and attendance tracking system.
+                    {embeddingsLoaded && storedEmbeddings.length === 0 && (
+                        <span className="text-red-600 font-semibold ml-2">
+                            ⚠️ No registered faces found. Please register students first.
+                        </span>
+                    )}
+                </CardDescription>
             </CardHeader>
             <CardContent>
                 <div className="relative group">

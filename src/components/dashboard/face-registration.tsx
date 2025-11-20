@@ -244,64 +244,157 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
   const PromptIcon = currentPrompt.icon;
 
   return (
-    <Card className="mt-4">
-      <CardHeader>
-        <CardTitle>AI Face Registration</CardTitle>
-        <CardDescription>
-          Register your child's face for automated, AI-powered attendance tracking.
-          Follow the on-screen prompts to complete the process.
-        </CardDescription>
+    <Card className="mt-4 border-2 shadow-lg">
+      <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-primary/10 rounded-lg">
+            <Camera className="h-6 w-6 text-primary" />
+          </div>
+          <div>
+            <CardTitle className="text-2xl">AI Face Registration</CardTitle>
+            <CardDescription className="text-base mt-1">
+              Register your child's face for automated, AI-powered attendance tracking
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="pt-6">
         <audio ref={audioRef} src="/sounds/ting.mp3" preload="auto"></audio>
 
-        <div className="relative w-full aspect-video rounded-md overflow-hidden border bg-black flex items-center justify-center group">
-          <video ref={videoRef} className="w-full h-full object-contain -scale-x-100" autoPlay muted playsInline />
+        {/* Instructions Card */}
+        {!isRegistering && !isSubmitting && (
+          <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
+            <h3 className="font-semibold text-sm mb-2 flex items-center gap-2">
+              <span className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs">i</span>
+              How it works
+            </h3>
+            <ul className="text-sm space-y-1 text-muted-foreground ml-8">
+              <li>• Position your face in the center of the camera frame</li>
+              <li>• Follow the on-screen instructions to capture multiple angles</li>
+              <li>• Keep your face well-lit and clearly visible</li>
+              <li>• The process takes about 15 seconds</li>
+            </ul>
+          </div>
+        )}
+
+        {/* Video Preview */}
+        <div className="relative w-full aspect-video rounded-xl overflow-hidden border-2 border-gray-200 dark:border-gray-700 bg-black shadow-xl">
+          <video 
+            ref={videoRef} 
+            className="w-full h-full object-contain -scale-x-100" 
+            autoPlay 
+            muted 
+            playsInline 
+          />
           
           {hasCameraPermission === false && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 text-center p-4">
-               <Alert variant="destructive">
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertTitle>Camera Access Required</AlertTitle>
-                  <AlertDescription>
-                    Please allow camera access to use this feature.
-                  </AlertDescription>
-              </Alert>
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 text-center p-6">
+               <div className="bg-white dark:bg-gray-800 p-6 rounded-lg max-w-md">
+                 <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+                 <h3 className="text-lg font-semibold mb-2">Camera Access Required</h3>
+                 <p className="text-sm text-muted-foreground mb-4">
+                   Please allow camera access in your browser to use face registration.
+                 </p>
+                 <Button onClick={startRegistration} variant="outline" className="w-full">
+                   <Camera className="mr-2 h-4 w-4" />
+                   Grant Camera Access
+                 </Button>
+               </div>
             </div>
           )}
 
           {isRegistering && (
              <>
-                <div className="absolute inset-0 z-10 pointer-events-none hologram-grid" />
-                <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
-                     <div className="w-48 h-64 border-2 border-cyan-400/50 rounded-full animate-pulse" />
+                {/* Scanning Effect */}
+                <div className="absolute inset-0 z-10 pointer-events-none">
+                  <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/10 via-transparent to-cyan-500/10 animate-pulse" />
                 </div>
-                <div className="absolute top-4 left-4 w-8 h-8 border-t-2 border-l-2 border-cyan-400 animate-[pulse_2s_infinite]"></div>
-                <div className="absolute top-4 right-4 w-8 h-8 border-t-2 border-r-2 border-cyan-400 animate-[pulse_2s_infinite_0.2s]"></div>
-                <div className="absolute bottom-4 left-4 w-8 h-8 border-b-2 border-l-2 border-cyan-400 animate-[pulse_2s_infinite_0.4s]"></div>
-                <div className="absolute bottom-4 right-4 w-8 h-8 border-b-2 border-r-2 border-cyan-400 animate-[pulse_2s_infinite_0.6s]"></div>
+                
+                {/* Face Detection Oval */}
+                <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+                     <div className="w-64 h-80 border-4 border-cyan-400/70 rounded-full shadow-[0_0_30px_rgba(34,211,238,0.5)] animate-pulse" />
+                </div>
+                
+                {/* Corner Brackets */}
+                <div className="absolute top-6 left-6 w-12 h-12 border-t-4 border-l-4 border-cyan-400 rounded-tl-lg animate-[pulse_2s_infinite]"></div>
+                <div className="absolute top-6 right-6 w-12 h-12 border-t-4 border-r-4 border-cyan-400 rounded-tr-lg animate-[pulse_2s_infinite_0.2s]"></div>
+                <div className="absolute bottom-6 left-6 w-12 h-12 border-b-4 border-l-4 border-cyan-400 rounded-bl-lg animate-[pulse_2s_infinite_0.4s]"></div>
+                <div className="absolute bottom-6 right-6 w-12 h-12 border-b-4 border-r-4 border-cyan-400 rounded-br-lg animate-[pulse_2s_infinite_0.6s]"></div>
+                
+                {/* Scanning Line */}
+                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent animate-[scan_3s_ease-in-out_infinite]" />
+                
+                {/* Status Badge */}
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30">
+                  <div className="bg-cyan-500 text-white px-4 py-2 rounded-full text-sm font-semibold flex items-center gap-2 shadow-lg">
+                    <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+                    Scanning Face...
+                  </div>
+                </div>
              </>
+          )}
+          
+          {/* Submitting Overlay */}
+          {isSubmitting && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-30">
+              <Loader2 className="h-16 w-16 text-cyan-400 animate-spin mb-4" />
+              <p className="text-white text-lg font-semibold">Processing Registration...</p>
+              <p className="text-gray-300 text-sm mt-2">Generating face embeddings</p>
+            </div>
           )}
         </div>
 
-        {isRegistering ? (
-            <div className="mt-4 text-center space-y-4">
-                <p className="text-lg font-semibold text-primary">{currentPrompt.text}</p>
-                <Progress value={currentPrompt.progress} className="w-1/2 mx-auto" />
-                <div className="relative w-32 h-32 mx-auto flex items-center justify-center">
-                   {PromptIcon && <PromptIcon className="h-24 w-24 text-cyan-400 animate-float" />}
+        {/* Instructions During Scan */}
+        {isRegistering && (
+            <div className="mt-6 space-y-4">
+                <div className="bg-gradient-to-r from-cyan-50 to-blue-50 dark:from-cyan-950 dark:to-blue-950 p-6 rounded-lg border-2 border-cyan-200 dark:border-cyan-800">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xl font-bold text-cyan-700 dark:text-cyan-300">{currentPrompt.text}</p>
+                    <div className="text-sm font-semibold text-cyan-600 dark:text-cyan-400 bg-white dark:bg-gray-800 px-3 py-1 rounded-full">
+                      Step {currentPromptIndex + 1} of {prompts.length}
+                    </div>
+                  </div>
+                  <Progress value={currentPrompt.progress} className="h-3" />
+                </div>
+                
+                <div className="flex items-center justify-center">
+                   {PromptIcon && (
+                     <div className="relative">
+                       <div className="absolute inset-0 bg-cyan-400/20 rounded-full blur-xl"></div>
+                       <PromptIcon className="h-32 w-32 text-cyan-500 relative animate-bounce" strokeWidth={1.5} />
+                     </div>
+                   )}
                 </div>
             </div>
-        ) : (
-             <div className="mt-4 flex justify-center">
-                 <Button onClick={startRegistration} size="lg" disabled={isSubmitting}>
+        )}
+
+        {/* Start Button */}
+        {!isRegistering && (
+             <div className="mt-6 flex flex-col items-center gap-4">
+                 <Button 
+                   onClick={startRegistration} 
+                   size="lg" 
+                   disabled={isSubmitting}
+                   className="px-8 py-6 text-lg font-semibold shadow-lg hover:shadow-xl transition-all"
+                 >
                     {isSubmitting ? (
                         <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Submitting...
+                            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                            Submitting Registration...
                         </>
-                    ) : "Start Face Registration"}
+                    ) : (
+                        <>
+                            <Camera className="mr-2 h-5 w-5" />
+                            Start Face Registration
+                        </>
+                    )}
                  </Button>
+                 
+                 {!isSubmitting && (
+                   <p className="text-sm text-muted-foreground text-center max-w-md">
+                     By starting registration, you consent to capturing and processing facial data for attendance tracking purposes.
+                   </p>
+                 )}
              </div>
         )}
       </CardContent>

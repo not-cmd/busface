@@ -216,9 +216,31 @@ export async function generateFaceEmbeddingAction(
     // Convert embedding to array for storage
     const embeddingArray = Array.from(faceEmbedding.dataSync());
     
-    // Validate embedding array - check for NaN values
+    // Validate embedding array - check for NaN values and size
     if (embeddingArray.some(val => isNaN(val) || !isFinite(val))) {
+      console.error(`Invalid embedding values for ${studentName}`);
       return { success: false, error: 'Generated embedding contains invalid values' };
+    }
+    
+    if (embeddingArray.length !== 512) {
+      console.error(`Invalid embedding size for ${studentName}: ${embeddingArray.length} (expected 512)`);
+      return { success: false, error: `Invalid embedding size: ${embeddingArray.length}` };
+    }
+    
+    // Check if embedding has meaningful values (not all zeros)
+    const nonZeroCount = embeddingArray.filter(v => Math.abs(v) > 0.01).length;
+    const embeddingMean = embeddingArray.reduce((a, b) => a + b, 0) / embeddingArray.length;
+    
+    console.log(`Generated embedding for ${studentName}:`, {
+      length: embeddingArray.length,
+      nonZeroValues: nonZeroCount,
+      mean: embeddingMean.toFixed(4),
+      min: Math.min(...embeddingArray).toFixed(4),
+      max: Math.max(...embeddingArray).toFixed(4)
+    });
+    
+    if (nonZeroCount < 100) {
+      console.warn(`Embedding for ${studentName} has very few non-zero values (${nonZeroCount})`);
     }
     
     const uid = generateStableId(faceEmbedding);
@@ -233,6 +255,8 @@ export async function generateFaceEmbeddingAction(
       photoDataUri,
       timestamp: new Date().toISOString()
     });
+    
+    console.log(`✓ Successfully stored embedding for ${studentName} in faceEmbeddings/${studentId}`);
 
     return { 
       success: true, 
