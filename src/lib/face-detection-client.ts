@@ -57,37 +57,59 @@ export async function detectFacesClient(
 
 /**
  * Generate face embedding (simplified client-side version)
+ * Always generates a 512-dimensional embedding for consistency
  */
 export function generateFaceEmbeddingClient(faceTensor: tf.Tensor3D): Float32Array {
   return tf.tidy(() => {
     // Resize to standard size
-    const resized = tf.image.resizeBilinear(faceTensor, [160, 160]);
+    const resized = tf.image.resizeBilinear(faceTensor, [224, 224]);
     
-    // Convert to grayscale
+    // Convert to grayscale and normalize
     const grayscale = tf.image.rgbToGrayscale(resized);
     const normalized = tf.div(grayscale, 255.0);
     
-    // Generate features using moments and simple statistics
-    const moments = tf.moments(normalized, [0, 1]);
-    const mean = moments.mean;
-    const variance = moments.variance;
+    // Generate multiple scales for better features
+    const scales = [1.0, 0.85, 0.7, 0.5];
+    const allFeatures: tf.Tensor1D[] = [];
     
-    // Create histogram features
-    const flattened = normalized.flatten();
-    const bins = 64;
-    const histogram = tf.zeros([bins]);
+    for (const scale of scales) {
+      const scaledSize = Math.round(224 * scale);
+      const scaled = tf.image.resizeBilinear(normalized as tf.Tensor3D, [scaledSize, scaledSize]);
+      
+      // Extract moments
+      const moments = tf.moments(scaled, [0, 1]);
+      allFeatures.push(moments.mean.flatten() as tf.Tensor1D);
+      allFeatures.push(moments.variance.flatten() as tf.Tensor1D);
+      
+      // Extract patches
+      const flattened = scaled.flatten();
+      const patchSize = Math.min(30, flattened.shape[0]);
+      allFeatures.push(flattened.slice([0], [patchSize]) as tf.Tensor1D);
+    }
     
-    // Simple feature extraction
-    const features = tf.concat([
-      mean.flatten(),
-      variance.flatten(),
-      flattened.slice([0], [Math.min(128, flattened.shape[0])])
-    ]);
+    // Concatenate all features
+    const combined = tf.concat(allFeatures) as tf.Tensor1D;
+    
+    // Ensure exactly 512 dimensions
+    const targetSize = 512;
+    let finalFeatures: tf.Tensor1D;
+    
+    if (combined.shape[0] >= targetSize) {
+      // Truncate to 512
+      finalFeatures = combined.slice([0], [targetSize]) as tf.Tensor1D;
+    } else {
+      // Pad to 512
+      const padding = tf.zeros([targetSize - combined.shape[0]]) as tf.Tensor1D;
+      finalFeatures = tf.concat([combined, padding]) as tf.Tensor1D;
+    }
     
     // Normalize features
-    const featuresMean = tf.mean(features);
-    const featuresStd = tf.sqrt(tf.mean(tf.square(tf.sub(features, featuresMean))));
-    const normalizedFeatures = tf.div(tf.sub(features, featuresMean), tf.add(featuresStd, 1e-8));
+    const featuresMean = tf.mean(finalFeatures);
+    const featuresStd = tf.sqrt(tf.mean(tf.square(tf.sub(finalFeatures, featuresMean))));
+    const normalizedFeatures = tf.div(
+      tf.sub(finalFeatures, featuresMean), 
+      tf.add(featuresStd, 1e-8)
+    );
     
     return normalizedFeatures.dataSync() as Float32Array;
   });
