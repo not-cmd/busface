@@ -7,7 +7,7 @@ import { format } from 'date-fns';
 
 // Define a more specific type for student JSON data.
 export interface StudentJson {
-    id: string;
+    id?: string; // Made optional since data uses studentId as primary identifier
     studentId: string;
     name: string;
     age: number;
@@ -19,6 +19,7 @@ export interface StudentJson {
     address: string;
     latitude?: number;
     longitude?: number;
+    pickupTime?: string; // Added since it exists in the JSON
     status: string;
     specialAttention: boolean;
     parentId: string;

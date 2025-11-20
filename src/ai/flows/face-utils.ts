@@ -13,10 +13,19 @@ export async function imageDataUriToTensor(dataUri: string): Promise<tf.Tensor3D
   // Draw image
   ctx.drawImage(image, 0, 0);
   
-  // Convert to tensor
+  // Convert to tensor and remove alpha channel (RGBA -> RGB)
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const pixels = new Float32Array(imageData.data);
-  return tf.tensor3d(pixels, [canvas.height, canvas.width, 4]);
+  const rgbData = new Float32Array(canvas.width * canvas.height * 3);
+  
+  // Extract RGB channels from RGBA
+  for (let i = 0; i < canvas.width * canvas.height; i++) {
+    rgbData[i * 3] = imageData.data[i * 4];     // R
+    rgbData[i * 3 + 1] = imageData.data[i * 4 + 1]; // G
+    rgbData[i * 3 + 2] = imageData.data[i * 4 + 2]; // B
+    // Skip alpha channel (imageData.data[i * 4 + 3])
+  }
+  
+  return tf.tensor3d(rgbData, [canvas.height, canvas.width, 3]);
 }
 
 export function cosineSimilarity(a: tf.Tensor2D, b: tf.Tensor2D): number {

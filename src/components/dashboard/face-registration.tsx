@@ -9,6 +9,7 @@ import { Camera, AlertTriangle, ArrowRight, ArrowLeft, ArrowUp, ArrowDown, Check
 import { Progress } from '@/components/ui/progress';
 import { db } from '@/lib/firebase';
 import { ref as dbRef, set, push } from 'firebase/database';
+import { generateFaceEmbeddingAction } from '@/app/actions';
 
 const prompts = [
   { text: 'Please look directly at the camera.', icon: null, progress: 0 },
@@ -51,7 +52,12 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
   }, [cleanupCamera]);
 
   const playSound = () => {
-    audioRef.current?.play().catch(e => console.error("Error playing sound:", e));
+    if (audioRef.current) {
+      audioRef.current.play().catch(e => {
+        // Silently handle audio errors - sound is not critical for functionality
+        console.log("Audio not available:", e.message);
+      });
+    }
   }
 
   const finishRegistration = useCallback(async () => {
@@ -65,9 +71,35 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
     }
 
     setIsSubmitting(true);
-    toast({ title: "Submitting for Approval...", description: "Please wait while we upload your facial data for admin review." });
+    toast({ title: "Processing Images...", description: "Generating face embeddings for registration." });
 
     try {
+        // Generate embeddings for all captured images
+        const embeddingPromises = capturedImagesRef.current.map(async (photoDataUri, index) => {
+          const result = await generateFaceEmbeddingAction(photoDataUri, studentId, studentName);
+          return {
+            photoDataUri,
+            embedding: result.embedding,
+            uid: result.uid,
+            success: result.success,
+            error: result.error,
+            index
+          };
+        });
+
+        const embeddingResults = await Promise.all(embeddingPromises);
+        const successfulEmbeddings = embeddingResults.filter(result => result.success);
+
+        if (successfulEmbeddings.length === 0) {
+          toast({ 
+            variant: 'destructive', 
+            title: "Registration Failed", 
+            description: "Could not generate face embeddings from any photos. Please try again." 
+          });
+          return;
+        }
+
+        // Store in pending registrations with embeddings
         const pendingFacesRef = dbRef(db, `pendingFaceRegistrations`);
         const newPendingRef = push(pendingFacesRef);
         
@@ -76,12 +108,18 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
             studentName,
             status: 'pending',
             photos: capturedImagesRef.current,
-            timestamp: new Date().toISOString()
+            embeddings: successfulEmbeddings.map(result => ({
+              photoDataUri: result.photoDataUri,
+              embedding: result.embedding,
+              uid: result.uid
+            })),
+            timestamp: new Date().toISOString(),
+            embeddingCount: successfulEmbeddings.length
         });
 
         toast({
             title: "Registration Submitted!",
-            description: "An administrator will review your photos. You will be notified upon approval.",
+            description: `Generated ${successfulEmbeddings.length} face embeddings. Admin will review your registration.`,
             className: 'bg-green-100 border-green-300 text-green-800'
         });
 
@@ -100,12 +138,20 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
   const captureImage = useCallback(() => {
       if (videoRef.current && videoRef.current.readyState >= 3 && videoRef.current.videoWidth > 0) {
           const canvas = document.createElement('canvas');
-          canvas.width = videoRef.current.videoWidth;
-          canvas.height = videoRef.current.videoHeight;
+          const video = videoRef.current;
+          
+          // Optimize image size for upload
+          const maxWidth = 640;
+          const maxHeight = 480;
+          const scale = Math.min(maxWidth / video.videoWidth, maxHeight / video.videoHeight, 1);
+          
+          canvas.width = video.videoWidth * scale;
+          canvas.height = video.videoHeight * scale;
+          
           const context = canvas.getContext('2d');
           if (context) {
-              context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-              const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+              context.drawImage(video, 0, 0, canvas.width, canvas.height);
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.5); // Reduced quality to 50%
               capturedImagesRef.current.push(dataUrl);
           }
       }
@@ -144,7 +190,27 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
     setHasCameraPermission(null);
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      // First check if we have permission
+      const permissions = await navigator.permissions.query({ name: 'camera' as PermissionName });
+      
+      if (permissions.state === 'denied') {
+        setHasCameraPermission(false);
+        toast({
+          variant: 'destructive',
+          title: 'Camera Access Denied',
+          description: 'Please enable camera permissions in your browser settings and refresh the page.',
+        });
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: "user"
+        } 
+      });
+      
       if (!isComponentMounted.current) {
         stream.getTracks().forEach(track => track.stop());
         return;

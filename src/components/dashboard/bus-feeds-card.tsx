@@ -73,7 +73,19 @@ export function BusFeedsCard({ busId }: BusFeedsCardProps) {
                             </div>
                         )}
                         {liveCctvUrl && !isLoading && !error && (
-                            <Image src={liveCctvUrl} alt="Live CCTV feed" width={600} height={400} className="object-cover w-full h-full" />
+                            <Image 
+                                src={liveCctvUrl} 
+                                alt="Live CCTV feed" 
+                                width={600} 
+                                height={400} 
+                                className="object-cover w-full h-full" 
+                                onError={() => {
+                                    setError('Failed to load live feed image');
+                                }}
+                                onLoad={() => {
+                                    setError(''); // Clear any previous errors
+                                }}
+                            />
                         )}
                         {!liveCctvUrl && !isLoading && !error && (
                              <div className="flex flex-col items-center gap-2 text-muted-foreground">

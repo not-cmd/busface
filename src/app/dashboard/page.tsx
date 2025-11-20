@@ -12,6 +12,7 @@ import { Menu } from 'lucide-react';
 import Link from 'next/link';
 import { IntruderAlertsCard } from '@/components/dashboard/intruder-alerts-card';
 import { FaceApprovalCard } from '@/components/dashboard/face-approval-card';
+import { Breadcrumbs } from '@/components/breadcrumbs';
 
 export default function Dashboard() {
   return (
@@ -129,6 +130,7 @@ export default function Dashboard() {
         </div>
       </header>
       <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
+        <Breadcrumbs />
         <div className="grid gap-4 md:gap-8 lg:grid-cols-3">
             <div className="lg:col-span-3">
                 <OverviewStats />

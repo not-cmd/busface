@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { GuardianRouteLogo } from '@/components/icons';
+import { GuardianTrackLogo } from '@/components/icons';
 import { UserNav } from '@/components/user-nav';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -88,7 +88,7 @@ export default function StudentsPage() {
             href="/dashboard"
             className="flex items-center gap-2 text-lg font-semibold md:text-base"
           >
-            <GuardianRouteLogo className="h-6 w-6" />
+            <GuardianTrackLogo className="h-6 w-6" />
             <span className="sr-only">GuardianRoute</span>
           </Link>
           <Link
@@ -139,7 +139,7 @@ export default function StudentsPage() {
                 href="/dashboard"
                 className="flex items-center gap-2 text-lg font-semibold"
               >
-                <GuardianRouteLogo className="h-6 w-6" />
+                <GuardianTrackLogo className="h-6 w-6" />
                 <span className="sr-only">GuardianRoute</span>
               </Link>
               <Link href="/dashboard" className="text-muted-foreground hover:text-foreground">

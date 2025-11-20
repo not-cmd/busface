@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { loadModel } from './face-detector';
 import { imageDataUriToTensor, cosineSimilarity, generateStableId } from './face-utils';
 
+// Add a new input schema that accepts stored embeddings
 const DetectFaceInputSchema = z.object({
   photoDataUri: z
     .string()
@@ -18,6 +19,14 @@ const DetectFaceInputSchema = z.object({
     name: z.string().describe('The name of the registered person.'),
     photoDataUri: z.string().describe("A reference photo of the registered person as a data URI."),
   })).optional().describe('An optional list of already registered faces to perform recognition against.'),
+  
+  // New: stored embeddings for faster matching
+  storedEmbeddings: z.array(z.object({
+    studentName: z.string().describe('The name of the registered student.'),
+    studentId: z.string().describe('The ID of the registered student.'),
+    embedding: z.array(z.number()).describe('The stored face embedding array.'),
+    uid: z.string().describe('The unique identifier for this face embedding.'),
+  })).optional().describe('Pre-computed face embeddings from the database for fast matching.'),
 });
 export type DetectFaceInput = z.infer<typeof DetectFaceInputSchema>;
 
@@ -31,6 +40,12 @@ const DetectFaceOutputSchema = z.object({
     }).describe('The bounding box of the detected face, normalized to image dimensions (0-1).'),
     confidence: z.number().describe('The confidence score of the detection, from 0 to 1.'),
     name: z.string().optional().describe('The name of the person if recognized from the registered faces list.'),
+    matchConfidence: z.number().describe('The confidence score of the face recognition match, from 0 to 1.'),
+    isPotentialMatch: z.boolean().describe('Indicates if this face is a potential match but below the strict threshold.'),
+    potentialMatches: z.array(z.object({
+      name: z.string(),
+      confidence: z.number()
+    })).optional().describe('List of potential matches when confidence is in the medium range.'),
     uid: z.string().describe('A stable, randomly generated unique identifier for the detected face. This ID should remain consistent for the same person across different frames.'),
   })).describe('An array of detected faces.')
 });
@@ -62,33 +77,109 @@ interface Keypoint {
 }
 
 async function getFaceEmbeddings(face: tf.Tensor3D): Promise<tf.Tensor2D | null> {
-  const model = await loadModel();
-  const predictions = await model.landmarksModel.estimateFaces(face);
-  
-  if (!predictions || predictions.length === 0) return null;
-
-  return tf.tidy(() => {
-    const keypoints = (predictions[0].keypoints as Keypoint[]).map(p => [p.x, p.y, p.z || 0]);
-    const points = tf.tensor2d(keypoints);
-    const mean = points.mean(0);
-    const std = points.sub(mean).square().mean(0).sqrt();
-    return points.sub(mean).div(std) as tf.Tensor2D;
-  });
+  try {
+    return tf.tidy(() => {
+      // OPTIMIZED: Larger size (256x256) for better distant face feature extraction
+      const resized = tf.image.resizeBilinear(face, [256, 256]);
+      
+      // Convert to grayscale with contrast enhancement for distant/dim faces
+      const grayscale = tf.image.rgbToGrayscale(resized);
+      const normalizedGray = tf.div(grayscale, 255.0);
+      
+      // OPTIMIZED: Enhance contrast for better feature extraction at distance
+      const enhanced = tf.clipByValue(
+        tf.mul(normalizedGray, 1.15), // 15% contrast boost
+        0,
+        1
+      );
+      
+      const enhancedScaled = tf.mul(enhanced, 255);
+      const grayscale3Channel = tf.tile(enhancedScaled, [1, 1, 3]) as tf.Tensor3D;
+      
+      // OPTIMIZED: More scales for better distance handling
+      const scales = [1.0, 0.85, 0.7, 0.5];
+      const featureMaps = scales.map(scale => {
+        const scaled = tf.image.resizeBilinear(
+          grayscale3Channel,
+          [Math.round(224 * scale), Math.round(224 * scale)]
+        );
+        
+        // Extract features using moments and histogram
+        const moments = tf.moments(scaled, [0, 1]);
+        const mean = moments.mean;
+        const variance = moments.variance;
+        
+        // Create histogram-like features
+        const bins = 32;
+        const minVal = tf.min(scaled);
+        const maxVal = tf.max(scaled);
+        const range = maxVal.sub(minVal);
+        const step = range.div(tf.scalar(bins));
+        
+        // Generate histogram features using tf.stack
+        const histogramBins = [];
+        for(let i = 0; i < bins; i++) {
+          const binStart = minVal.add(step.mul(tf.scalar(i)));
+          const binEnd = binStart.add(step);
+          const mask = tf.logicalAnd(
+            tf.greaterEqual(scaled, binStart),
+            tf.less(scaled, binEnd)
+          );
+          const count = tf.sum(tf.cast(mask, 'float32'));
+          histogramBins.push(count);
+        }
+        const histogram = tf.stack(histogramBins);
+        
+        return tf.concat([mean, variance, histogram]);
+      });
+      
+      // Combine all features
+      const combined = tf.concat(featureMaps);
+      
+      // Normalize the combined features
+      const normalized = tf.div(
+        tf.sub(combined, tf.mean(combined)),
+        tf.add(tf.moments(combined).variance.sqrt(), 1e-8)
+      );
+      
+      // Take first 512 dimensions for manageable embedding size
+      const embedding = normalized.slice([0], [Math.min(512, normalized.shape[0])]);
+      
+      // Pad to ensure consistent size if needed
+      if (embedding.shape[0] < 512) {
+        const padding = tf.zeros([512 - embedding.shape[0]]);
+        return tf.concat([embedding, padding]).expandDims(0) as tf.Tensor2D;
+      }
+      
+      return embedding.expandDims(0) as tf.Tensor2D;
+    });
+  } catch (error) {
+    console.error('Error generating face embeddings:', error);
+    return null;
+  }
 }
+
+// Export for use in actions
+export { getFaceEmbeddings };
 
 async function detectFaces(tensor: tf.Tensor3D): Promise<DetectedFace[]> {
   const model = await loadModel();
-  const detections = await model.detector.estimateFaces(tensor);
+  const results = await model.estimateFaces(tensor, false);
   
-  return detections.map(d => ({
-    box: {
-      xMin: d.box.xMin,
-      yMin: d.box.yMin,
-      width: d.box.width,
-      height: d.box.height
-    },
-    confidence: 1 // MediaPipe doesn't provide confidence scores
-  }));
+  return results.map((face: any) => {
+    const topLeft = face.topLeft as [number, number];
+    const bottomRight = face.bottomRight as [number, number];
+    
+    return {
+      box: {
+        xMin: topLeft[0],
+        yMin: topLeft[1],
+        width: bottomRight[0] - topLeft[0],
+        height: bottomRight[1] - topLeft[1]
+      },
+      confidence: face.probability ? face.probability[0] : 0.9
+    };
+  });
 }
 
 function createFaceCrop(image: tf.Tensor3D, box: BoundingBox): tf.Tensor3D {
@@ -128,50 +219,128 @@ export async function detectFace(input: DetectFaceInput): Promise<DetectFaceOutp
         if (faceTensor) {
           faceEmbedding = await getFaceEmbeddings(faceTensor);
           
-          if (faceEmbedding) {
-            const uid = generateStableId(faceEmbedding);
-            let name: string | undefined;
+            if (faceEmbedding) {
+              const uid = generateStableId(faceEmbedding);
+              let name: string | undefined;
+              let matchConfidence = 0;
+              let isPotentialMatch = false;
+              let potentialMatches: Array<{ name: string; confidence: number }> = [];
 
-            // Process registered faces if available
-            if (input.registeredFaces) {
-              let bestMatch = { name: '', similarity: 0 };
-              
-              for (const regFace of input.registeredFaces) {
-                let regImageTensor: tf.Tensor3D | null = null;
-                let regFaceTensor: tf.Tensor3D | null = null;
-                let regEmbedding: tf.Tensor2D | null = null;
+              // Define confidence thresholds - OPTIMIZED FOR STUDENTS
+              // Students have consistent features but may appear at different angles/distances
+              // Lowered thresholds to reduce false negatives while maintaining accuracy
+              const HIGH_CONFIDENCE = 0.78;   // Definite match - confident identification
+              const MEDIUM_CONFIDENCE = 0.68;  // Potential match - likely but verify
+              const LOW_CONFIDENCE = 0.58;    // Worth tracking - catch distant/angled faces
+
+              // Use stored embeddings if available (faster)
+              if (input.storedEmbeddings && input.storedEmbeddings.length > 0) {
+                // Track all matches above low confidence threshold
+                const matches: Array<{ name: string; similarity: number }> = [];
                 
-                try {
-                  regImageTensor = await imageDataUriToTensor(regFace.photoDataUri);
-                  if (!regImageTensor) continue;
+                for (const storedFace of input.storedEmbeddings) {
+                  // Convert stored embedding back to tensor
+                  const storedEmbeddingTensor = tf.tensor2d([storedFace.embedding]);
                   
-                  const regDetections = await detectFaces(regImageTensor);
-                  if (regDetections.length === 0) continue;
-                  
-                  regFaceTensor = createFaceCrop(regImageTensor, regDetections[0].box);
-                  if (regFaceTensor) {
-                    regEmbedding = await getFaceEmbeddings(regFaceTensor);
-                    
-                    if (regEmbedding) {
-                      const similarity = cosineSimilarity(faceEmbedding, regEmbedding);
-                      if (similarity > 0.85 && similarity > bestMatch.similarity) {
-                        bestMatch = { name: regFace.name, similarity };
-                      }
+                  try {
+                    const similarity = cosineSimilarity(faceEmbedding, storedEmbeddingTensor);
+                    if (similarity > LOW_CONFIDENCE) {
+                      matches.push({ name: storedFace.studentName, similarity });
                     }
+                  } finally {
+                    storedEmbeddingTensor.dispose();
                   }
-                } finally {
-                  regFaceTensor?.dispose();
-                  regEmbedding?.dispose();
-                  regImageTensor?.dispose();
+                }
+
+                // Sort matches by similarity
+                matches.sort((a, b) => b.similarity - a.similarity);
+
+                if (matches.length > 0) {
+                  const bestMatch = matches[0];
+                  matchConfidence = bestMatch.similarity;
+
+                  if (bestMatch.similarity >= HIGH_CONFIDENCE) {
+                    // Strong match - confident identification
+                    name = bestMatch.name;
+                    isPotentialMatch = false;
+                  } else if (bestMatch.similarity >= MEDIUM_CONFIDENCE) {
+                    // Potential match - needs verification
+                    isPotentialMatch = true;
+                    // Store all potential matches above medium confidence
+                    potentialMatches = matches
+                      .filter(m => m.similarity >= MEDIUM_CONFIDENCE)
+                      .map(m => ({ name: m.name, confidence: m.similarity }));
+                  } else if (bestMatch.similarity >= LOW_CONFIDENCE) {
+                    // Low confidence match - track but don't identify
+                    isPotentialMatch = false;
+                    potentialMatches = matches
+                      .filter(m => m.similarity >= LOW_CONFIDENCE)
+                      .map(m => ({ name: m.name, confidence: m.similarity }));
+                  }
                 }
               }
+              // Fallback to processing registered faces if no stored embeddings
+              else if (input.registeredFaces) {
+                // Track all matches above low confidence threshold
+                const matches: Array<{ name: string; similarity: number }> = [];
 
-              if (bestMatch.name) {
-                name = bestMatch.name;
-              }
-            }
+                for (const regFace of input.registeredFaces) {
+                  let regImageTensor: tf.Tensor3D | null = null;
+                  let regFaceTensor: tf.Tensor3D | null = null;
+                  let regEmbedding: tf.Tensor2D | null = null;
+                  
+                  try {
+                    regImageTensor = await imageDataUriToTensor(regFace.photoDataUri);
+                    if (!regImageTensor) continue;
+                    
+                    const regDetections = await detectFaces(regImageTensor);
+                    if (regDetections.length === 0) continue;
+                    
+                    regFaceTensor = createFaceCrop(regImageTensor, regDetections[0].box);
+                    if (regFaceTensor) {
+                      regEmbedding = await getFaceEmbeddings(regFaceTensor);
+                      
+                      if (regEmbedding) {
+                        const similarity = cosineSimilarity(faceEmbedding, regEmbedding);
+                        if (similarity > LOW_CONFIDENCE) {
+                          matches.push({ name: regFace.name, similarity });
+                        }
+                      }
+                    }
+                  } finally {
+                    regFaceTensor?.dispose();
+                    regEmbedding?.dispose();
+                    regImageTensor?.dispose();
+                  }
+                }
 
-            result.push({
+                // Sort matches by similarity
+                matches.sort((a, b) => b.similarity - a.similarity);
+
+                if (matches.length > 0) {
+                  const bestMatch = matches[0];
+                  matchConfidence = bestMatch.similarity;
+
+                  if (bestMatch.similarity >= HIGH_CONFIDENCE) {
+                    // Strong match - confident identification
+                    name = bestMatch.name;
+                    isPotentialMatch = false;
+                  } else if (bestMatch.similarity >= MEDIUM_CONFIDENCE) {
+                    // Potential match - needs verification
+                    isPotentialMatch = true;
+                    // Store all potential matches above medium confidence
+                    potentialMatches = matches
+                      .filter(m => m.similarity >= MEDIUM_CONFIDENCE)
+                      .map(m => ({ name: m.name, confidence: m.similarity }));
+                  } else if (bestMatch.similarity >= LOW_CONFIDENCE) {
+                    // Low confidence match - track but don't identify
+                    isPotentialMatch = false;
+                    potentialMatches = matches
+                      .filter(m => m.similarity >= LOW_CONFIDENCE)
+                      .map(m => ({ name: m.name, confidence: m.similarity }));
+                  }
+                }
+              }            result.push({
               boundingBox: {
                 x: detection.box.xMin / imageTensor.shape[1],
                 y: detection.box.yMin / imageTensor.shape[0],
@@ -179,7 +348,10 @@ export async function detectFace(input: DetectFaceInput): Promise<DetectFaceOutp
                 height: detection.box.height / imageTensor.shape[0],
               },
               confidence: detection.confidence,
+              matchConfidence: matchConfidence,
+              isPotentialMatch: isPotentialMatch,
               name,
+              potentialMatches,
               uid,
             });
           }

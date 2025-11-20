@@ -1,7 +1,6 @@
-
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Gauge } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -20,57 +19,57 @@ export function SpeedTracker({ busId }: SpeedTrackerProps) {
     useEffect(() => {
         let watchId: number;
         if (busId && navigator.geolocation) {
-        watchId = navigator.geolocation.watchPosition(
-            async (position) => {
-            const { latitude, longitude } = position.coords;
-            const currentSpeed = position.coords.speed ? position.coords.speed * 3.6 : 0; // m/s to km/h
-            setSpeed(currentSpeed);
-            
-            if (currentSpeed > 55 && !speedToastId.current) {
-                const { id } = toast({
-                    variant: "destructive",
-                    title: "High Speed Warning",
-                    description: "Please reduce your speed and drive safely.",
-                    duration: Infinity, // Stays until dismissed
-                });
-                speedToastId.current = id;
-            } else if (currentSpeed <= 55 && speedToastId.current) {
-                dismiss(speedToastId.current);
-                speedToastId.current = null;
-            }
+            watchId = navigator.geolocation.watchPosition(
+                async (position) => {
+                    const { latitude, longitude } = position.coords;
+                    const currentSpeed = position.coords.speed ? position.coords.speed * 3.6 : 0; // m/s to km/h
+                    setSpeed(currentSpeed);
 
-            try {
-                const busLocationRef = ref(db, `busLocations/${busId}`);
-                await set(busLocationRef, {
-                    latitude,
-                    longitude,
-                    speed: currentSpeed,
-                    timestamp: serverTimestamp(),
-                    liveCctvUrl: `https://placehold.co/600x400.png?text=Bus-${busId.split('_')[1]}-Live`
-                });
-            } catch (error) {
-                console.error("Error writing location to RTDB:", error);
-            }
-            },
-            (error) => {
-            console.error("Geolocation error:", error);
-            toast({
-                variant: 'destructive',
-                title: 'Location Error',
-                description: 'Could not get location. Make sure GPS is enabled.',
-            });
-            },
-            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-        );
+                    if (currentSpeed > 55 && !speedToastId.current) {
+                        const { id } = toast({
+                            variant: "destructive",
+                            title: "High Speed Warning",
+                            description: "Please reduce your speed and drive safely.",
+                            duration: Infinity, // Stays until dismissed
+                        });
+                        speedToastId.current = id;
+                    } else if (currentSpeed <= 55 && speedToastId.current) {
+                        dismiss(speedToastId.current);
+                        speedToastId.current = null;
+                    }
+
+                    try {
+                        const busLocationRef = ref(db, `busLocations/${busId}`);
+                        await set(busLocationRef, {
+                            latitude,
+                            longitude,
+                            speed: currentSpeed,
+                            timestamp: serverTimestamp(),
+                            liveCctvUrl: `https://placehold.co/600x400.png?text=Bus-${busId.split('_')[1]}-Live`
+                        });
+                    } catch (error) {
+                        console.error("Error writing location to RTDB:", error);
+                    }
+                },
+                (error) => {
+                    console.error("Geolocation error:", error);
+                    toast({
+                        variant: 'destructive',
+                        title: 'Location Error',
+                        description: 'Could not get location. Make sure GPS is enabled.',
+                    });
+                },
+                { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+            );
         }
 
         return () => {
-        if (watchId) {
-            navigator.geolocation.clearWatch(watchId);
-        }
-        if (speedToastId.current) {
-            dismiss(speedToastId.current);
-        }
+            if (watchId) {
+                navigator.geolocation.clearWatch(watchId);
+            }
+            if (speedToastId.current) {
+                dismiss(speedToastId.current);
+            }
         };
     }, [busId, toast, dismiss]);
 

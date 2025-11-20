@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { GuardianTrackLogo } from '@/components/icons';
 import { UserNav } from '@/components/user-nav';
 import { Button } from '@/components/ui/button';
@@ -15,11 +15,21 @@ import { cn } from '@/lib/utils';
 import busData from '@/lib/buses.json';
 import type { StudentJson as StudentType, StudentStatus } from '@/lib/data';
 import { SpeedTracker } from '@/components/dashboard/speed-tracker';
-import { LiveFeed } from '@/components/dashboard/live-feed';
+import { FacialRecognitionFeed } from '@/components/dashboard/facial-recognition-feed';
+import { LiveCCTV } from '@/components/dashboard/live-cctv';
 import { RouteMapCard } from '@/components/dashboard/route-map-card';
 import { format } from 'date-fns';
 import { db } from '@/lib/firebase';
 import { ref, onValue, set, update } from 'firebase/database';
+import { 
+  listenToSessionChanges, 
+  updateSessionActivity, 
+  removeSession,
+  cleanupStaleSessions 
+} from '@/lib/session-manager';
+import { useRouter } from 'next/navigation';
+import { AlertCircle } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 type AttendanceStatus = 'Present' | 'Absent' | 'Pending' | StudentStatus;
 interface AttendanceRecord {
@@ -29,6 +39,7 @@ interface AttendanceRecord {
 }
 
 export default function BusStaffDashboard() {
+  const router = useRouter();
   const [greeting, setGreeting] = useState('');
   const [staffName, setStaffName] = useState('');
   const [busId, setBusId] = useState<string | null>(null);
@@ -36,11 +47,13 @@ export default function BusStaffDashboard() {
   const [studentAttendance, setStudentAttendance] = useState<Record<string, AttendanceRecord>>({});
   const { toast } = useToast();
   const [onBoardCount, setOnBoardCount] = useState(0);
+  const [sessionTakenOver, setSessionTakenOver] = useState(false);
+  const [isPrimarySession, setIsPrimarySession] = useState(true);
 
-  const getAttendanceRef = (studentId: string) => {
+  const getAttendanceRef = useCallback((studentId: string) => {
     const today = format(new Date(), 'yyyy-MM-dd');
     return ref(db, `attendance/${today}/${studentId}`);
-  };
+  }, []);
 
   useEffect(() => {
     const hours = new Date().getHours();
@@ -50,41 +63,107 @@ export default function BusStaffDashboard() {
 
     const loggedInStaffId = localStorage.getItem('loggedInStaffId');
     const loggedInBusId = localStorage.getItem('loggedInStaffBusId');
+    const sessionId = localStorage.getItem('staffSessionId');
+    const isPrimary = localStorage.getItem('isPrimarySession') === 'true';
     
-    if (loggedInStaffId && loggedInBusId) {
-        setStaffName(loggedInStaffId);
-        setBusId(loggedInBusId);
+    if (!loggedInStaffId || !loggedInBusId || !sessionId) {
+        router.push('/login');
+        return;
+    }
 
-        const studentsRef = ref(db, 'students');
-        const unsubscribeStudents = onValue(studentsRef, (snapshot) => {
-            const allStudentsData = snapshot.val() || {};
-            const allStudents: StudentType[] = Object.values(allStudentsData);
-            const filteredStudents = allStudents.filter(s => s.busId === loggedInBusId);
-            setStudentsForBus(filteredStudents);
+    setStaffName(loggedInStaffId);
+    setBusId(loggedInBusId);
+    setIsPrimarySession(isPrimary);
 
-            const today = format(new Date(), 'yyyy-MM-dd');
-            const attendanceRef = ref(db, `attendance/${today}`);
-            const unsubscribeAttendance = onValue(attendanceRef, (attSnapshot) => {
-                const data = attSnapshot.val() || {};
-                const initialRecords: Record<string, AttendanceRecord> = {};
-                filteredStudents.forEach(s => {
-                    initialRecords[s.studentId] = data[s.studentId] || { status: 'Pending', entry: null, exit: null };
-                });
-                setStudentAttendance(initialRecords);
-                const presentCount = Object.values(initialRecords).filter(record => record.status === 'On Board').length;
-                setOnBoardCount(presentCount);
-            });
+    // Clean up stale sessions on mount
+    cleanupStaleSessions(loggedInBusId);
 
-            return () => unsubscribeAttendance();
+    // Listen for session takeover
+    const unsubscribeSession = listenToSessionChanges(
+      loggedInBusId,
+      sessionId,
+      () => {
+        setSessionTakenOver(true);
+        toast({
+          variant: 'destructive',
+          title: 'Session Taken Over',
+          description: 'You have been logged out from another device.',
         });
         
-        return () => unsubscribeStudents();
-    }
-  }, []);
+        // Clear local storage and redirect after 3 seconds
+        setTimeout(() => {
+          localStorage.removeItem('loggedInStaffId');
+          localStorage.removeItem('loggedInStaffBusId');
+          localStorage.removeItem('staffSessionId');
+          localStorage.removeItem('isPrimarySession');
+          router.push('/login');
+        }, 3000);
+      }
+    );
+
+    // Update session activity every 30 seconds
+    const activityInterval = setInterval(() => {
+      if (!sessionTakenOver) {
+        updateSessionActivity(loggedInBusId, sessionId);
+      }
+    }, 30000);
+
+    let unsubscribeAttendance: (() => void) | null = null;
+    
+    const studentsRef = ref(db, 'students');
+    const unsubscribeStudents = onValue(studentsRef, (snapshot) => {
+        const allStudentsData = snapshot.val() || {};
+        const allStudents: StudentType[] = Object.values(allStudentsData);
+        const filteredStudents = allStudents.filter(s => s.busId === loggedInBusId);
+        setStudentsForBus(filteredStudents);
+
+        // Clean up previous attendance listener
+        if (unsubscribeAttendance) {
+            unsubscribeAttendance();
+            unsubscribeAttendance = null;
+        }
+
+        // Set up new attendance listener only if we have students
+        if (filteredStudents.length > 0) {
+            const today = format(new Date(), 'yyyy-MM-dd');
+            const attendanceRef = ref(db, `attendance/${today}`);
+            unsubscribeAttendance = onValue(attendanceRef, (attSnapshot) => {
+                const data = attSnapshot.val() || {};
+                const initialRecords: Record<string, AttendanceRecord> = {};
+                let presentCount = 0;
+                
+                filteredStudents.forEach(s => {
+                    const record = data[s.studentId] || { status: 'Pending', entry: null, exit: null };
+                    initialRecords[s.studentId] = record;
+                    if (record.status === 'On Board') {
+                        presentCount++;
+                    }
+                });
+                
+                setStudentAttendance(initialRecords);
+                setOnBoardCount(presentCount);
+            });
+        }
+    });
+    
+    return () => {
+        unsubscribeStudents();
+        if (unsubscribeAttendance) {
+            unsubscribeAttendance();
+        }
+        unsubscribeSession();
+        clearInterval(activityInterval);
+        
+        // Clean up session on unmount
+        if (sessionId && loggedInBusId && !sessionTakenOver) {
+          removeSession(loggedInBusId, sessionId);
+        }
+    };
+  }, []); // Empty dependency array to run only once
 
   const studentsOnBus = useMemo(() => studentsForBus, [studentsForBus]);
 
-  const handleManualAttendance = async (studentId: string, studentName: string, action: 'board' | 'exit' | 'mark_absent') => {
+  const handleManualAttendance = useCallback(async (studentId: string, studentName: string, action: 'board' | 'exit' | 'mark_absent') => {
     const attendanceRef = getAttendanceRef(studentId);
     
     try {
@@ -126,7 +205,7 @@ export default function BusStaffDashboard() {
             description: "Could not update attendance. Please check your connection."
         });
     }
-  };
+  }, [toast, getAttendanceRef]);
 
   if (!busId) {
     return (
@@ -178,6 +257,27 @@ export default function BusStaffDashboard() {
         </div>
       </header>
       <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
+        {/* Session Status Alerts */}
+        {sessionTakenOver && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Session Taken Over</AlertTitle>
+            <AlertDescription>
+              Your session has been taken over by another device. Redirecting to login...
+            </AlertDescription>
+          </Alert>
+        )}
+        
+        {!isPrimarySession && !sessionTakenOver && (
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Read-Only Mode</AlertTitle>
+            <AlertDescription>
+              You are in read-only mode. Camera access is controlled by another device. You can still view data and manually update attendance.
+            </AlertDescription>
+          </Alert>
+        )}
+
         <div className="mb-4">
           <h1 className="text-3xl font-bold">{`${greeting}, ${staffName}`}</h1>
           <p className="text-muted-foreground">Live feed and attendance for bus {currentBus.name}.</p>
@@ -185,14 +285,16 @@ export default function BusStaffDashboard() {
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
            <SpeedTracker busId={busId} />
-           <LiveFeed busId={busId} studentsOnBus={studentsOnBus} />
-           <RouteMapCard busId={busId} students={studentsOnBus} />
+           <FacialRecognitionFeed busId={busId} studentsOnBus={studentsOnBus} isPrimarySession={isPrimarySession} />
+           <LiveCCTV busId={busId} />
         </div>
-        <Card>
+        <div className="grid gap-4 md:grid-cols-2">
+           <RouteMapCard busId={busId} students={studentsOnBus} />
+           <Card>
             <CardHeader>
                 <div className="flex items-center justify-between">
                     <CardTitle>Students on this Bus</CardTitle>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Users className="h-4 w-4" />
                         <span className="font-semibold">{onBoardCount} / {currentBus.capacity}</span>
                     </div>
@@ -220,7 +322,11 @@ export default function BusStaffDashboard() {
                             )}
                         >
                             <div className="flex items-center gap-4 w-full sm:w-auto">
-                                <Image src={student.profilePhotos[0]} alt={student.name} width={40} height={40} className="rounded-full border" />
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center border shadow-sm">
+                                    <span className="text-lg font-bold text-white">
+                                        {student.name.charAt(0).toUpperCase()}
+                                    </span>
+                                </div>
                                 <div className="flex-1">
                                     <p className="font-semibold">{student.name}</p>
                                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -271,7 +377,8 @@ export default function BusStaffDashboard() {
                     )
                 })}
             </CardContent>
-            </Card>
+           </Card>
+        </div>
       </main>
     </div>
   );

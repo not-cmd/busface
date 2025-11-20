@@ -2,7 +2,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import Map, { Marker, NavigationControl } from 'react-map-gl';
+import dynamic from 'next/dynamic';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Map as MapIcon, Home, Loader, AlertTriangle, Bus } from 'lucide-react';
 import { db } from '@/lib/firebase';
@@ -10,6 +10,20 @@ import { ref, onValue } from 'firebase/database';
 import type { StudentJson as StudentType } from '@/lib/data';
 import { ScrollArea } from '../ui/scroll-area';
 import { Badge } from '../ui/badge';
+
+// Dynamically import the Map components with no SSR
+const MapComponent = dynamic(() => import('react-map-gl').then(mod => mod.default), { 
+  ssr: false,
+  loading: () => <div className="flex items-center justify-center h-full"><Loader className="h-8 w-8 animate-spin" /></div>
+});
+
+const MarkerComponent = dynamic(() => import('react-map-gl').then(mod => mod.Marker), { 
+  ssr: false 
+});
+
+const NavigationControlComponent = dynamic(() => import('react-map-gl').then(mod => mod.NavigationControl), { 
+  ssr: false 
+});
 
 interface RouteMapCardProps {
   busId: string;
@@ -21,10 +35,31 @@ interface BusLocation {
   longitude: number;
 }
 
+// Browser compatibility check
+const isBrowserSupported = () => {
+  if (typeof window === 'undefined') return false;
+  
+  try {
+    // Check for WebGL support
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    
+    // Check for other required features
+    const hasWebGL = !!gl;
+    const hasWorker = typeof Worker !== 'undefined';
+    const hasArrayBuffer = typeof ArrayBuffer !== 'undefined';
+    
+    return hasWebGL && hasWorker && hasArrayBuffer;
+  } catch (e) {
+    return false;
+  }
+};
+
 function RouteMapCardComponent({ busId, students }: RouteMapCardProps) {
   const [location, setLocation] = useState<BusLocation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [browserSupported, setBrowserSupported] = useState(true);
   const [viewState, setViewState] = useState({
     latitude: 19.0760, // Default to Mumbai
     longitude: 72.8777,
@@ -32,6 +67,11 @@ function RouteMapCardComponent({ busId, students }: RouteMapCardProps) {
   });
 
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+
+  useEffect(() => {
+    // Check browser compatibility on client side
+    setBrowserSupported(isBrowserSupported());
+  }, []);
 
   useEffect(() => {
     if (!busId) return;
@@ -84,32 +124,41 @@ function RouteMapCardComponent({ busId, students }: RouteMapCardProps) {
             </div>
         )
     }
+    if (!browserSupported) {
+        return (
+            <div className="flex flex-col items-center gap-2 text-destructive p-4 text-center">
+                <AlertTriangle className="h-8 w-8" />
+                <p className="font-semibold">Browser Not Supported</p>
+                <p className="text-sm">Your browser doesn't support the required features for map rendering. Please try using a modern browser like Chrome, Firefox, or Safari.</p>
+            </div>
+        )
+    }
     if (location) {
         return (
-            <Map
+            <MapComponent
                 {...viewState}
-                onMove={evt => setViewState(evt.viewState)}
+                onMove={(evt: any) => setViewState(evt.viewState)}
                 style={{width: '100%', height: '100%'}}
                 mapStyle="mapbox://styles/mapbox/streets-v11"
                 mapboxAccessToken={mapboxToken}
             >
-                 <NavigationControl position="top-right" />
-                 <Marker longitude={location.longitude} latitude={location.latitude}>
+                 <NavigationControlComponent position="top-right" />
+                 <MarkerComponent longitude={location.longitude} latitude={location.latitude}>
                     <div className="text-primary transform -translate-x-1/2 -translate-y-1/2">
                         <Bus className="h-8 w-8 drop-shadow-lg" />
                     </div>
-                </Marker>
+                </MarkerComponent>
                 {students.map((student, index) => (
                     student.latitude && student.longitude ? (
-                        <Marker key={student.studentId} longitude={student.longitude} latitude={student.latitude}>
+                        <MarkerComponent key={student.studentId} longitude={student.longitude} latitude={student.latitude}>
                             <div className="transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
                                 <Badge className="bg-blue-500 text-white rounded-full h-6 w-6 flex items-center justify-center mb-1 z-10">{index + 1}</Badge>
                                 <Home className="h-6 w-6 text-blue-800 drop-shadow-md" />
                             </div>
-                        </Marker>
+                        </MarkerComponent>
                     ) : null
                 ))}
-            </Map>
+            </MapComponent>
         )
     }
     return <p className="text-muted-foreground">No location data.</p>;

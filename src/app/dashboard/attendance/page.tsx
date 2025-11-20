@@ -50,12 +50,16 @@ export default function AttendancePage() {
 
             if (liveRecord) {
                 combinedAttendance[student.studentId] = {
-                    status: liveRecord.status,
+                    status: liveRecord.status as StudentStatus | 'Present' | 'Absent',
                     entry: liveRecord.entry || staticRecord?.entry || 'N/A',
                     exit: liveRecord.exit || staticRecord?.exit || 'N/A'
                 };
             } else if (staticRecord) {
-                combinedAttendance[student.studentId] = staticRecord;
+                combinedAttendance[student.studentId] = {
+                    status: staticRecord.status as StudentStatus | 'Present' | 'Absent',
+                    entry: staticRecord.entry,
+                    exit: staticRecord.exit
+                };
             } else {
                 combinedAttendance[student.studentId] = { status: 'Absent', entry: null, exit: null };
             }

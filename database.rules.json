@@ -8,6 +8,64 @@
       ".read": true,
       ".write": true
     },
+    "attendance": {
+      ".read": true,
+      ".write": true
+    },
+    "buses": {
+      ".read": true,
+      ".write": true
+    },
+    "students": {
+      ".read": true,
+      ".write": true
+    },
+    "chats": {
+      ".read": true,
+      ".write": true
+    },
+    "faceEmbeddings": {
+      ".read": true,
+      ".write": true
+    },
+    "studentEvents": {
+      ".read": true,
+      ".write": true
+    },
+    "alerts": {
+      ".read": true,
+      ".write": true
+    },
+    "intruderAlerts": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["faceUid", "timestamp"]
+    },
+    "staffSessions": {
+      ".read": true,
+      ".write": true,
+      "$busId": {
+        ".indexOn": ["staffId", "lastActive"]
+      }
+    },
+    "liveFeeds": {
+      ".read": true,
+      ".write": true,
+      "$busId": {
+        ".indexOn": ["timestamp"]
+      }
+    },
+    "notifications": {
+      ".read": true,
+      ".write": true,
+      "$userId": {
+        ".indexOn": ["timestamp", "read", "type"]
+      }
+    },
+    "notificationPreferences": {
+      ".read": true,
+      ".write": true
+    },
     "$other": {
       ".read": true,
       ".write": true

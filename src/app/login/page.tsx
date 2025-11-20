@@ -29,6 +29,23 @@ import { ref, get } from 'firebase/database';
 import staticParentCredentials from '@/lib/parent-credentials.json';
 import staticStaffCredentials from '@/lib/staff-credentials.json';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { 
+  checkExistingSession, 
+  createSession, 
+  takeOverSession, 
+  getDeviceInfo,
+  type StaffSession 
+} from '@/lib/session-manager';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 
 const getBusForStaff = (staffId: string): Bus | null => {
@@ -47,26 +64,40 @@ export default function LoginPage() {
   const [staffPassword, setStaffPassword] = useState('');
   const [parentCredentials, setParentCredentials] = useState<Record<string, string>>({});
   const [staffCredentials, setStaffCredentials] = useState<Record<string, string>>({});
+  const [existingSession, setExistingSession] = useState<StaffSession | null>(null);
+  const [pendingStaffLogin, setPendingStaffLogin] = useState<{ staffId: string; busId: string } | null>(null);
+  const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
 
   useEffect(() => {
     const fetchCredentials = async () => {
-        // Fetch Parent Credentials
-        const parentCredsRef = ref(db, 'parentCredentials');
-        const parentSnapshot = await get(parentCredsRef);
-        if (parentSnapshot.exists()) {
-            setParentCredentials(parentSnapshot.val());
-        } else {
-            console.log("Using static parent credentials");
-            setParentCredentials(staticParentCredentials);
-        }
+        try {
+            // Fetch Parent Credentials
+            console.log("Fetching parent credentials...");
+            const parentCredsRef = ref(db, 'parentCredentials');
+            const parentSnapshot = await get(parentCredsRef);
+            if (parentSnapshot.exists()) {
+                console.log("Got parent credentials from Firebase");
+                setParentCredentials(parentSnapshot.val());
+            } else {
+                console.log("No parent credentials in Firebase, using static data");
+                setParentCredentials(staticParentCredentials);
+            }
 
-        // Fetch Staff Credentials
-        const staffCredsRef = ref(db, 'staffCredentials');
-        const staffSnapshot = await get(staffCredsRef);
-        if (staffSnapshot.exists()) {
-            setStaffCredentials(staffSnapshot.val());
-        } else {
-            console.log("Using static staff credentials");
+            // Fetch Staff Credentials
+            console.log("Fetching staff credentials...");
+            const staffCredsRef = ref(db, 'staffCredentials');
+            const staffSnapshot = await get(staffCredsRef);
+            if (staffSnapshot.exists()) {
+                console.log("Got staff credentials from Firebase");
+                setStaffCredentials(staffSnapshot.val());
+            } else {
+                console.log("No staff credentials in Firebase, using static data");
+                setStaffCredentials(staticStaffCredentials);
+            }
+        } catch (error) {
+            console.error("Error fetching credentials:", error);
+            console.log("Falling back to static credentials");
+            setParentCredentials(staticParentCredentials);
             setStaffCredentials(staticStaffCredentials);
         }
     };
@@ -88,10 +119,15 @@ export default function LoginPage() {
   };
 
   const handleParentLogin = () => {
+    console.log("Attempting parent login with ID:", parentId);
+    console.log("Available parent credentials:", parentCredentials);
     if (parentCredentials[parentId] && parentCredentials[parentId] === parentPassword) {
+      console.log("Parent login successful, setting local storage");
       localStorage.setItem('loggedInParentId', parentId);
+      console.log("Redirecting to parent dashboard");
       router.push('/dashboard/parent');
     } else {
+      console.log("Parent login failed - invalid credentials");
       toast({
         variant: 'destructive',
         title: 'Login Failed',
@@ -100,14 +136,28 @@ export default function LoginPage() {
     }
   };
 
-  const handleStaffLogin = () => {
+  const handleStaffLogin = async () => {
+    console.log("Attempting staff login with ID:", staffId);
+    console.log("Available staff credentials:", staffCredentials);
     if (staffCredentials[staffId] && staffCredentials[staffId] === staffPassword) {
+      console.log("Staff credentials valid, checking bus assignment");
       const bus = getBusForStaff(staffId);
       if (bus) {
-        localStorage.setItem('loggedInStaffId', staffId);
-        localStorage.setItem('loggedInStaffBusId', bus.busId);
-        router.push('/dashboard/bus-staff');
+        console.log("Found bus assignment:", bus.busId);
+        
+        // Check for existing session
+        const existing = await checkExistingSession(staffId, bus.busId);
+        if (existing) {
+          console.log("Found existing session:", existing);
+          setExistingSession(existing);
+          setPendingStaffLogin({ staffId, busId: bus.busId });
+          setShowDuplicateDialog(true);
+        } else {
+          // No existing session, proceed with login
+          await proceedWithStaffLogin(staffId, bus.busId, true);
+        }
       } else {
+         console.log("No bus assignment found for staff member");
          toast({
             variant: 'destructive',
             title: 'Login Failed',
@@ -115,12 +165,89 @@ export default function LoginPage() {
          });
       }
     } else {
+      console.log("Staff login failed - invalid credentials");
       toast({
         variant: 'destructive',
         title: 'Login Failed',
         description: 'Invalid bus staff credentials.',
       });
     }
+  };
+
+  const proceedWithStaffLogin = async (staffId: string, busId: string, isPrimary: boolean) => {
+    try {
+      // Create session
+      const sessionId = await createSession(staffId, busId, isPrimary);
+      console.log("Session created:", sessionId);
+      
+      localStorage.setItem('loggedInStaffId', staffId);
+      localStorage.setItem('loggedInStaffBusId', busId);
+      localStorage.setItem('staffSessionId', sessionId);
+      localStorage.setItem('isPrimarySession', isPrimary ? 'true' : 'false');
+      
+      toast({
+        title: isPrimary ? 'Login Successful' : 'Logged In (Read-Only)',
+        description: isPrimary 
+          ? 'You have camera access for facial recognition.' 
+          : 'You are in read-only mode. Camera is controlled by another device.',
+      });
+      
+      console.log("Redirecting to staff dashboard");
+      router.push('/dashboard/bus-staff');
+    } catch (error) {
+      console.error("Error creating session:", error);
+      toast({
+        variant: 'destructive',
+        title: 'Login Failed',
+        description: 'Could not create session. Please try again.',
+      });
+    }
+  };
+
+  const handleTakeOver = async () => {
+    if (!pendingStaffLogin || !existingSession) return;
+    
+    try {
+      // Take over the existing session
+      const newSessionId = await takeOverSession(
+        pendingStaffLogin.staffId,
+        pendingStaffLogin.busId,
+        existingSession.sessionId
+      );
+      
+      localStorage.setItem('loggedInStaffId', pendingStaffLogin.staffId);
+      localStorage.setItem('loggedInStaffBusId', pendingStaffLogin.busId);
+      localStorage.setItem('staffSessionId', newSessionId);
+      localStorage.setItem('isPrimarySession', 'true');
+      
+      toast({
+        title: 'Session Taken Over',
+        description: 'You now have camera access. The other device has been logged out.',
+      });
+      
+      setShowDuplicateDialog(false);
+      router.push('/dashboard/bus-staff');
+    } catch (error) {
+      console.error("Error taking over session:", error);
+      toast({
+        variant: 'destructive',
+        title: 'Failed to Take Over',
+        description: 'Could not take over the session. Please try again.',
+      });
+    }
+  };
+
+  const handleReadOnly = async () => {
+    if (!pendingStaffLogin) return;
+    
+    await proceedWithStaffLogin(pendingStaffLogin.staffId, pendingStaffLogin.busId, false);
+    setShowDuplicateDialog(false);
+  };
+
+  const handleCancelLogin = () => {
+    setShowDuplicateDialog(false);
+    setPendingStaffLogin(null);
+    setExistingSession(null);
   };
 
   return (
@@ -298,6 +425,40 @@ export default function LoginPage() {
             About Us
           </Link>
         </footer>
+
+      {/* Duplicate Session Dialog */}
+      <AlertDialog open={showDuplicateDialog} onOpenChange={setShowDuplicateDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Already Logged In</AlertDialogTitle>
+            <AlertDialogDescription>
+              This staff account is already logged in on another device:
+              <div className="mt-3 p-3 bg-muted rounded-md">
+                <p className="font-semibold">Device: {existingSession?.deviceInfo}</p>
+                <p className="text-sm text-muted-foreground">
+                  Login Time: {existingSession ? new Date(existingSession.loginTime).toLocaleTimeString() : ''}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Last Active: {existingSession ? new Date(existingSession.lastActive).toLocaleTimeString() : ''}
+                </p>
+              </div>
+              <p className="mt-3">
+                You can take over the session (the other device will be logged out), 
+                login as read-only (no camera access), or cancel.
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel onClick={handleCancelLogin}>Cancel</AlertDialogCancel>
+            <Button variant="outline" onClick={handleReadOnly}>
+              Login Read-Only
+            </Button>
+            <AlertDialogAction onClick={handleTakeOver}>
+              Take Over Session
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

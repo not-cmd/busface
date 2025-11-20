@@ -1,0 +1,655 @@
+'use client';
+
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Camera, AlertTriangle } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { detectFaceAction } from '@/app/actions';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { MapPin } from 'lucide-react';
+import type { StudentJson as StudentType } from '@/lib/data';
+import { Badge } from '@/components/ui/badge';
+import { db } from '@/lib/firebase';
+import { ref as dbRef, push, set, query, orderByChild, equalTo, limitToLast, get, update, endBefore } from 'firebase/database';
+import busData from '@/lib/buses.json';
+import { format } from 'date-fns';
+
+interface FacialRecognitionFeedProps {
+    busId: string;
+    studentsOnBus: StudentType[];
+    isPrimarySession?: boolean; // If false, camera access is disabled
+}
+
+interface Face {
+    boundingBox: { x: number; y: number; width: number; height: number; };
+    confidence: number;
+    matchConfidence?: number;
+    isPotentialMatch?: boolean;
+    potentialMatches?: Array<{ name: string; confidence: number }>;
+    uid: string;
+    name?: string;
+    isRecognized?: boolean;
+    isWrongBus?: boolean;
+    correctBusName?: string;
+}
+
+interface RegisteredFace {
+    name: string;
+    photoDataUri: string;
+}
+
+export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession = true }: FacialRecognitionFeedProps) {
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
+    const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
+    const { toast } = useToast();
+    const [isScanning, setIsScanning] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [scanningEnabled, setScanningEnabled] = useState(false); // New state to control scanning
+    const [isCameraStarting, setIsCameraStarting] = useState(false); // Prevent repeated camera starts
+    const [cameraInitialized, setCameraInitialized] = useState(false); // Track if camera is properly initialized
+    const animationFrameId = useRef<number | null>(null);
+    const [detectedFaces, setDetectedFaces] = useState<Face[]>([]);
+    const lastRecognitionTime = useRef<Record<string, number>>({});
+    const lastToastTime = useRef<Record<string, number>>({});
+    const [registeredFaces, setRegisteredFaces] = useState<RegisteredFace[]>([]);
+    const [allStudents, setAllStudents] = useState<StudentType[]>([]);
+    const [readyToScan, setReadyToScan] = useState(false);
+
+    // Throttled toast function to prevent spam
+    const throttledToast = useCallback((key: string, toastOptions: any, throttleTime = 5000) => {
+        const now = Date.now();
+        if (!lastToastTime.current[key] || now - lastToastTime.current[key] > throttleTime) {
+            lastToastTime.current[key] = now;
+            toast(toastOptions);
+        }
+    }, [toast]);
+
+    useEffect(() => {
+        const studentsRef = dbRef(db, 'students');
+        get(studentsRef).then(snapshot => {
+            if (snapshot.exists()) {
+                setAllStudents(Object.values(snapshot.val()));
+            }
+        });
+
+        const registeredFacesRef = dbRef(db, 'registeredFaces');
+        const fetchRegisteredFaces = async () => {
+            const snapshot = await get(registeredFacesRef);
+            if (snapshot.exists()) {
+                const allStudentFaces: any = snapshot.val();
+                const faces: RegisteredFace[] = [];
+                
+                for (const studentId in allStudentFaces) {
+                    const studentData = allStudentFaces[studentId];
+                    if (studentData.photos && studentData.photos.length > 0) {
+                        studentData.photos.forEach((photoDataUri: string) => {
+                             faces.push({
+                                name: studentData.name,
+                                photoDataUri: photoDataUri
+                            });
+                        });
+                    }
+                }
+                setRegisteredFaces(faces);
+            }
+        };
+        fetchRegisteredFaces();
+    }, []);
+    
+    const requestLocation = useCallback(async () => {
+        try {
+            const status = await navigator.permissions.query({ name: 'geolocation' });
+            if (status.state === 'denied') {
+                setHasLocationPermission(false);
+                toast({ variant: 'destructive', title: 'Location Denied', description: 'Please enable location permissions.' });
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(
+                () => {
+                    console.log('Location permission granted');
+                    setHasLocationPermission(true);
+                },
+                (err) => {
+                    console.log('Location permission error:', err.message);
+                    setHasLocationPermission(false);
+                    toast({ variant: 'destructive', title: 'Location Error', description: err.message });
+                }
+            );
+        } catch (err) {
+            setHasLocationPermission(false);
+            toast({ variant: 'destructive', title: 'Location Error', description: 'Could not request location.' });
+        }
+    }, [toast]);
+
+    const startCamera = useCallback(async () => {
+        // Prevent multiple simultaneous camera start attempts
+        if (isCameraStarting || cameraInitialized) {
+            console.log("Camera startup already in progress or already initialized");
+            return;
+        }
+        
+        setIsCameraStarting(true);
+        
+        try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error('Camera not supported in this browser');
+            }
+
+            // Try to get camera stream first, permission check may not work on all browsers
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    facingMode: "user", // Change to "user" for front camera, which is more reliable
+                    frameRate: { ideal: 15 } // Reduce frame rate for better performance
+                }
+            });
+            
+            setHasCameraPermission(true);
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+                
+                // Only show success toast once
+                throttledToast('camera-connected', {
+                    title: 'Camera Connected',
+                    description: 'Face recognition is now active.',
+                    className: 'bg-green-100 border-green-300 text-green-800'
+                }, 10000);
+                
+                // Set up proper video initialization
+                videoRef.current.onloadedmetadata = () => {
+                    if (videoRef.current) {
+                        videoRef.current.play().then(() => {
+                            console.log('Camera initialized successfully');
+                            setCameraInitialized(true);
+                        });
+                    }
+                };
+            }
+        } catch (error) {
+            console.error('Error accessing camera:', error);
+            setHasCameraPermission(false);
+
+            let errorMessage = 'Please enable camera permissions to use this feature.';
+            
+            if (error instanceof Error) {
+                if (error.name === 'NotAllowedError') {
+                    errorMessage = 'Camera access was denied. Please click the camera icon in your browser address bar and allow camera access.';
+                } else if (error.name === 'NotFoundError') {
+                    errorMessage = 'No camera found on this device.';
+                } else if (error.name === 'NotReadableError') {
+                    errorMessage = 'Camera is being used by another application.';
+                } else {
+                    errorMessage = 'Error accessing camera: ' + error.message;
+                }
+            }
+
+            // Throttle error notifications
+            throttledToast('camera-error', {
+                title: "Camera Access Failed",
+                description: errorMessage,
+                variant: "destructive"
+            }, 5000);
+        } finally {
+            // Add a short delay to prevent immediate retries
+            if (!cameraInitialized) {
+                setTimeout(() => setIsCameraStarting(false), 2000);
+            } else {
+                setIsCameraStarting(false);
+            }
+        }
+    }, [throttledToast, isCameraStarting, cameraInitialized]);
+
+    const stopCamera = useCallback(() => {
+        if (animationFrameId.current) {
+            cancelAnimationFrame(animationFrameId.current);
+            animationFrameId.current = null;
+        }
+        setIsScanning(false);
+        if (videoRef.current && videoRef.current.srcObject) {
+            const stream = videoRef.current.srcObject as MediaStream;
+            stream.getTracks().forEach(track => track.stop());
+            videoRef.current.srcObject = null;
+        }
+    }, []);
+    
+    useEffect(() => {
+        let cleanupFn: (() => void) | undefined;
+        // Only allow camera access for primary sessions
+        if (isPrimarySession && readyToScan && !isCameraStarting && !cameraInitialized) {
+            startCamera();
+            cleanupFn = () => stopCamera();
+        }
+        return () => {
+            if (cleanupFn) cleanupFn();
+        };
+    }, [isPrimarySession, readyToScan, startCamera, stopCamera, isCameraStarting, cameraInitialized]);
+
+    const handleRecognitionEvent = useCallback(async (face: Face, snapshotDataUrl: string) => {
+        const now = Date.now();
+        const recognitionCooldown = 60000; // 1 minute cooldown per UID
+    
+        if (now - (lastRecognitionTime.current[face.uid] || 0) < recognitionCooldown) {
+            return;
+        }
+        lastRecognitionTime.current[face.uid] = now;
+    
+        try {
+            if (face.name && !face.isWrongBus) {
+                const student = studentsOnBus.find(s => s.name === face.name);
+                if (!student) return;
+
+                const today = format(new Date(), 'yyyy-MM-dd');
+                const attendanceRef = dbRef(db, `attendance/${today}/${student.studentId}`);
+                await update(attendanceRef, {
+                    status: 'On Board',
+                    entry: format(new Date(), 'hh:mm a'),
+                    source: 'AIAttendance'
+                });
+
+                const studentEventRef = dbRef(db, `studentEvents/${student.studentId}`);
+                await set(studentEventRef, {
+                    latestSnapshotUrl: snapshotDataUrl,
+                    timestamp: new Date().toISOString(),
+                    eventType: 'OnboardRecognition'
+                });
+
+                throttledToast(`recognized-${face.name}`, {
+                    title: `Recognized: ${face.name}`,
+                    description: 'Attendance marked as "On Board".',
+                }, 30000); // Only show once per 30 seconds per student
+            } else if (face.name && face.isWrongBus) {
+
+            } else if (!face.name || face.isPotentialMatch) {
+                const recentAlertsRef = dbRef(db, 'intruderAlerts');
+                
+                // Check for recent alerts with this face UID
+                const recentAlertsQuery = query(
+                    recentAlertsRef,
+                    orderByChild('faceUid'),
+                    equalTo(face.uid),
+                    limitToLast(1)
+                );
+                
+                const snapshot = await get(recentAlertsQuery);
+                const now = new Date();
+                const cooldownPeriod = 5 * 60 * 1000; // 5 minutes cooldown
+                
+                let shouldCreateAlert = true;
+                
+                if (snapshot.exists()) {
+                    const recentAlert = Object.values(snapshot.val())[0] as any;
+                    const lastAlertTime = new Date(recentAlert.timestamp);
+                    
+                    // Check cooldown period and similarity
+                    if (now.getTime() - lastAlertTime.getTime() < cooldownPeriod ||
+                        (face.matchConfidence && recentAlert.matchConfidence && 
+                         Math.abs(face.matchConfidence - recentAlert.matchConfidence) < 0.1)) {
+                        shouldCreateAlert = false;
+                    }
+                }
+                
+                if (shouldCreateAlert) {
+                    // Clean up old alerts (older than 24 hours)
+                    const oldAlertsQuery = query(
+                        recentAlertsRef,
+                        orderByChild('timestamp'),
+                        endBefore(new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString())
+                    );
+                    
+                    const oldAlerts = await get(oldAlertsQuery);
+                    if (oldAlerts.exists()) {
+                        const updates: { [key: string]: null } = {};
+                        oldAlerts.forEach((child) => {
+                            updates[child.key as string] = null;
+                        });
+                        await update(recentAlertsRef, updates);
+                    }
+
+                    // Create new alert
+                    const newIntruderRef = push(recentAlertsRef);
+                    await set(newIntruderRef, {
+                        snapshotUrl: snapshotDataUrl,
+                        timestamp: now.toISOString(),
+                        faceUid: face.uid,
+                        busId: busId,
+                        matchConfidence: face.matchConfidence || 0,
+                        isPotentialMatch: face.isPotentialMatch || false,
+                        potentialMatches: face.potentialMatches || []
+                    });
+
+                    // Show appropriate toast based on match confidence
+                    if (face.isPotentialMatch) {
+                        const potentialNames = face.potentialMatches?.map(m => m.name).join(', ');
+                        throttledToast('potential-match', {
+                            variant: 'warning',
+                            title: 'Potential Match Detected',
+                            description: `This person looks similar to: ${potentialNames}. Please verify.`
+                        }, 30000);
+                    } else {
+                        throttledToast('intruder-alert', {
+                            variant: 'destructive',
+                            title: `Unrecognized Person`,
+                            description: `Unknown person detected on Bus ${busId}. Snapshot saved.`
+                        }, 15000); // Only show once per 15 seconds
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error in recognition event process:', error);
+        }
+    }, [busId, throttledToast, studentsOnBus]);
+
+    const scanLoop = useCallback(async () => {
+        if (!isScanning || !videoRef.current || !canvasRef.current || videoRef.current.paused || videoRef.current.ended || !scanningEnabled) {
+            animationFrameId.current = requestAnimationFrame(scanLoop);
+            return;
+        }
+
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+        const context = canvas.getContext('2d');
+
+        if (context) {
+            // Ensure canvas size matches video
+            if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+            }
+            
+            // Clear canvas first
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // CRITICAL: Draw the current video frame to canvas for processing
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Draw face detection overlays on top
+            if (detectedFaces.length > 0) {
+                console.log(`Drawing ${detectedFaces.length} face overlays on canvas`);
+                
+                detectedFaces.forEach(face => {
+                    const { x, y, width, height } = face.boundingBox;
+                    const absX = x * canvas.width;
+                    const absY = y * canvas.height;
+                    const absWidth = width * canvas.width;
+                    const absHeight = height * canvas.height;
+
+                    context.lineWidth = 3;
+                    let color = 'red';
+                    let label = 'Unrecognized';
+
+                    if (face.isWrongBus) {
+                        color = '#3b82f6';
+                        label = `Wrong bus. Go to ${face.correctBusName || 'your bus'}.`;
+                    } else if (face.name) {
+                        color = 'lime';
+                        label = face.name;
+                    }
+                    
+                    context.strokeStyle = color;
+                    context.strokeRect(absX, absY, absWidth, absHeight);
+                    
+                    // Draw background for text
+                    const confidenceText = face.matchConfidence ? 
+                        `${Math.round(face.matchConfidence * 100)}%` : 
+                        `${Math.round(face.confidence * 100)}%`;
+                    const labelWithConfidence = `${label} (${confidenceText})`;
+                    
+                    context.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                    context.fillRect(absX, absY > 25 ? absY - 25 : absY + absHeight, absWidth, 20);
+                    
+                    context.fillStyle = color;
+                    context.font = 'bold 16px Arial';
+                    context.fillText(labelWithConfidence, absX + 5, absY > 25 ? absY - 8 : absY + absHeight + 15);
+                });
+            }
+
+            if (!isProcessing) {
+                setIsProcessing(true);
+                
+                // Create a smaller canvas for processing to reduce payload size
+                const processingCanvas = document.createElement('canvas');
+                const processingCtx = processingCanvas.getContext('2d');
+                
+                // OPTIMIZED: Balanced resolution (480x360) for better distant face detection
+                // Previous 320x240 was too small for faces at distance
+                const maxWidth = 480;
+                const maxHeight = 360;
+                const scale = Math.min(maxWidth / canvas.width, maxHeight / canvas.height);
+                
+                processingCanvas.width = canvas.width * scale;
+                processingCanvas.height = canvas.height * scale;
+                
+                if (processingCtx) {
+                    // Draw the video frame (not the overlays) to processing canvas
+                    processingCtx.drawImage(video, 0, 0, processingCanvas.width, processingCanvas.height);
+                }
+                
+                // OPTIMIZED: Slightly higher quality (25%) for better feature extraction
+                // Balance between file size and face recognition accuracy
+                const photoDataUri = processingCanvas.toDataURL('image/jpeg', 0.25);
+
+                try {
+                    console.log('Calling face detection API with image size:', processingCanvas.width, 'x', processingCanvas.height);
+                    const result = await detectFaceAction({ photoDataUri, registeredFaces });
+                    console.log('Face detection result:', result);
+                    
+                    const processedFaces = result.faces.map(face => {
+                        const studentInfo = allStudents.find(s => s.name === face.name);
+                        const isCorrectBus = studentInfo && studentInfo.busId === busId;
+                        const isWrongBus = studentInfo && studentInfo.busId !== busId;
+                        const correctBusName = isWrongBus ? busData[studentInfo.busId as keyof typeof busData]?.name : undefined;
+
+                        return {
+                            ...face,
+                            isRecognized: !!face.name,
+                            isWrongBus: isWrongBus,
+                            correctBusName: correctBusName
+                        };
+                    });
+
+                    setDetectedFaces(processedFaces);
+                    
+                    if (processedFaces.length > 0) {
+                        console.log(`Detected ${processedFaces.length} faces:`, processedFaces);
+                    }
+
+                    processedFaces.forEach(face => {
+                        handleRecognitionEvent(face, photoDataUri);
+                    });
+
+                    // OPTIMIZED: Adaptive delay based on detection
+                    // If faces detected: scan faster (2s) for better tracking
+                    // If no faces: scan slower (4s) to save resources
+                    const adaptiveDelay = processedFaces.length > 0 ? 2000 : 4000;
+                    setTimeout(() => setIsProcessing(false), adaptiveDelay);
+
+                } catch (error) {
+                    console.error("Error during face scan:", error);
+                    throttledToast('scan-error', {
+                        variant: 'destructive',
+                        title: "Face Detection Error",
+                        description: "Could not process camera feed for face detection.",
+                    }, 10000); // Only show once per 10 seconds
+                    
+                    // On error, wait longer before trying again
+                    setTimeout(() => setIsProcessing(false), 5000);
+                }
+            }
+        }
+        
+        animationFrameId.current = requestAnimationFrame(scanLoop);
+    }, [isScanning, detectedFaces, isProcessing, handleRecognitionEvent, registeredFaces, allStudents, busId, scanningEnabled, throttledToast]);
+
+    useEffect(() => {
+        if (scanningEnabled && cameraInitialized && hasCameraPermission) {
+            setIsScanning(true);
+            animationFrameId.current = requestAnimationFrame(scanLoop);
+        } else {
+            setIsScanning(false);
+            if (animationFrameId.current) {
+                cancelAnimationFrame(animationFrameId.current);
+            }
+        }
+        return () => {
+            if(animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+        }
+    }, [scanningEnabled, cameraInitialized, hasCameraPermission, scanLoop]);
+
+    // Auto-start scanning when camera is ready (location permission optional for face recognition)
+    useEffect(() => {
+        console.log('Auto-start check:', { cameraInitialized, hasCameraPermission, hasLocationPermission, readyToScan, scanningEnabled });
+        if (cameraInitialized && hasCameraPermission && readyToScan && !scanningEnabled) {
+            console.log('Auto-starting facial recognition scanning');
+            setScanningEnabled(true);
+        }
+    }, [cameraInitialized, hasCameraPermission, hasLocationPermission, readyToScan, scanningEnabled]);
+
+    const checkCameraPermissions = useCallback(async () => {
+        try {
+            const permissionStatus = await navigator.permissions.query({ name: 'camera' });
+            if (permissionStatus.state === 'denied') {
+                toast({
+                    variant: 'destructive',
+                    title: 'Camera Permission Denied',
+                    description: 'Camera access is blocked. Please reset permissions in your browser settings.',
+                });
+            } else if (permissionStatus.state === 'prompt') {
+                toast({
+                    title: 'Camera Permission Needed',
+                    description: 'Please allow camera access when prompted.',
+                });
+            }
+        } catch (error) {
+            console.error('Error checking camera permissions:', error);
+        }
+    }, [toast]);
+
+    useEffect(() => {
+        checkCameraPermissions();
+    }, [checkCameraPermissions]);
+
+    return (
+        <Card className="lg:col-span-2">
+            <CardHeader>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <Camera className="h-6 w-6 text-primary" />
+                        <CardTitle>Facial Recognition</CardTitle>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Badge variant={isScanning ? "default" : scanningEnabled ? "outline" : "secondary"}>
+                            {isScanning ? "Active" : scanningEnabled ? "Starting..." : "Inactive"}
+                        </Badge>
+                        <Badge variant="secondary">
+                            Detected: {detectedFaces.length}
+                        </Badge>
+                        {cameraInitialized && (
+                            <Badge variant="outline" className="text-green-600">
+                                Camera Ready
+                            </Badge>
+                        )}
+                    </div>
+                </div>
+                <CardDescription>Real-time student recognition and attendance tracking system.</CardDescription>
+            </CardHeader>
+            <CardContent>
+                <div className="relative group">
+                    <video ref={videoRef} className="w-full aspect-video rounded-md bg-black" autoPlay muted playsInline />
+                    <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full pointer-events-none z-10" />
+
+                    {/* Initial overlay prompting user to start */}
+                    {!readyToScan && isPrimarySession && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 rounded-md">
+                            <Camera className="h-10 w-10 text-white mb-4" />
+                            <p className="text-white mb-4">Facial Recognition</p>
+                            <Button onClick={() => setReadyToScan(true)} variant="outline">
+                                Start Camera
+                            </Button>
+                        </div>
+                    )}
+                    
+                    {/* Read-only mode overlay */}
+                    {!isPrimarySession && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 rounded-md">
+                            <Camera className="h-10 w-10 text-muted-foreground mb-4" />
+                            <p className="text-white mb-2 font-semibold">Read-Only Mode</p>
+                            <p className="text-white/70 text-sm text-center px-4">
+                                Camera access is controlled by another device
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Scanning control overlay */}
+                    {readyToScan && hasCameraPermission && !isProcessing && (
+                        <div className="absolute top-2 right-2 z-20">
+                            <Button 
+                                onClick={() => setScanningEnabled(!scanningEnabled)}
+                                variant={scanningEnabled ? "destructive" : "default"}
+                                size="sm"
+                                className={scanningEnabled ? "animate-pulse" : ""}
+                            >
+                                {scanningEnabled ? "Stop Scanning" : "Start Scanning"}
+                            </Button>
+                        </div>
+                    )}
+
+                    {/* Scanning indicator */}
+                    {isScanning && (
+                        <div className="absolute top-2 left-2 z-20">
+                            <div className="flex items-center gap-2 bg-green-500/80 text-white px-3 py-1 rounded-md text-sm">
+                                <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+                                Scanning Active
+                            </div>
+                        </div>
+                    )}
+
+                    {hasCameraPermission === false && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 rounded-md">
+                            <Camera className="h-10 w-10 text-muted-foreground mb-4" />
+                            <Alert variant="destructive" className="mt-4 max-w-sm">
+                                <AlertTriangle className="h-4 w-4" />
+                                <AlertTitle>Camera Access Required</AlertTitle>
+                                <AlertDescription>
+                                    Please enable camera permissions to use facial recognition.
+                                </AlertDescription>
+                            </Alert>
+                            <Button 
+                                onClick={startCamera} 
+                                className="mt-4"
+                                variant="outline"
+                            >
+                                Request Camera Access
+                            </Button>
+                        </div>
+                    )}
+                    {hasLocationPermission === false && readyToScan && hasCameraPermission && (
+                        <div className="absolute bottom-2 left-2 z-20">
+                            <Alert variant="default" className="max-w-sm bg-amber-50 border-amber-200">
+                                <MapPin className="h-4 w-4 text-amber-600" />
+                                <AlertTitle className="text-amber-800">Location Optional</AlertTitle>
+                                <AlertDescription className="text-amber-700">
+                                    Face recognition works without location. Enable location for attendance tracking.
+                                    <Button onClick={requestLocation} size="sm" variant="outline" className="ml-2">
+                                        Enable
+                                    </Button>
+                                </AlertDescription>
+                            </Alert>
+                        </div>
+                    )}
+
+                    {/* Processing overlay - less intrusive */}
+                    {isProcessing && (
+                        <div className="absolute top-2 left-2 flex items-center justify-center bg-black/30 rounded-md p-2">
+                            <Camera className="h-5 w-5 animate-spin text-primary mr-2" />
+                            <span className="text-xs text-white">Processing...</span>
+                        </div>
+                    )}
+                </div>
+            </CardContent>
+        </Card>
+    );
+}

@@ -7,5 +7,5 @@ export const firebaseConfig = {
   authDomain: 'guardianroute-bxtii.firebaseapp.com',
   measurementId: '',
   messagingSenderId: '557366290387',
-  databaseURL: "https://guardianroute-ok4z5-default-rtdb.asia-southeast1.firebasedatabase.app/"
+  databaseURL: "https://guardianroute-ok4z5-default-rtdb.asia-southeast1.firebasedatabase.app"
 };

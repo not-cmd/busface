@@ -2,12 +2,26 @@
 'use client';
 
 import { useState, useEffect } from "react";
-import Map, { Marker, NavigationControl } from 'react-map-gl';
+import dynamic from 'next/dynamic';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { MapPin, Loader, AlertTriangle, Bus } from "lucide-react"
 import { db } from "@/lib/firebase";
 import { ref, onValue } from "firebase/database";
+
+// Dynamically import the Map component with no SSR
+const MapComponent = dynamic(() => import('react-map-gl').then(mod => mod.default), { 
+  ssr: false,
+  loading: () => <div className="flex items-center justify-center h-full"><Loader className="h-8 w-8 animate-spin" /></div>
+});
+
+const MarkerComponent = dynamic(() => import('react-map-gl').then(mod => mod.Marker), { 
+  ssr: false 
+});
+
+const NavigationControlComponent = dynamic(() => import('react-map-gl').then(mod => mod.NavigationControl), { 
+  ssr: false 
+});
 
 interface LiveMapCardProps {
     busId?: string;
@@ -20,10 +34,31 @@ interface BusLocation {
     liveCctvUrl?: string;
 }
 
+// Browser compatibility check
+const isBrowserSupported = () => {
+  if (typeof window === 'undefined') return false;
+  
+  try {
+    // Check for WebGL support
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    
+    // Check for other required features
+    const hasWebGL = !!gl;
+    const hasWorker = typeof Worker !== 'undefined';
+    const hasArrayBuffer = typeof ArrayBuffer !== 'undefined';
+    
+    return hasWebGL && hasWorker && hasArrayBuffer;
+  } catch (e) {
+    return false;
+  }
+};
+
 export function LiveMapCard({ busId }: LiveMapCardProps) {
   const [locations, setLocations] = useState<BusLocation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [browserSupported, setBrowserSupported] = useState(true);
   const [viewState, setViewState] = useState({
     latitude: 19.0760, // Default to Mumbai
     longitude: 72.8777,
@@ -32,6 +67,11 @@ export function LiveMapCard({ busId }: LiveMapCardProps) {
 
   const isSingleBusView = !!busId;
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+
+  useEffect(() => {
+    // Check browser compatibility on client side
+    setBrowserSupported(isBrowserSupported());
+  }, []);
 
   useEffect(() => {
     setIsLoading(true);
@@ -89,7 +129,7 @@ export function LiveMapCard({ busId }: LiveMapCardProps) {
             </div>
         );
     }
-     if (!mapboxToken || mapboxToken.includes("YOUR_MAPBOX_ACCESS_TOKEN")) {
+    if (!mapboxToken || mapboxToken.includes("YOUR_MAPBOX_ACCESS_TOKEN")) {
         return (
             <div className="flex flex-col items-center gap-2 text-destructive p-4 text-center">
                 <AlertTriangle className="h-8 w-8" />
@@ -98,24 +138,33 @@ export function LiveMapCard({ busId }: LiveMapCardProps) {
             </div>
         )
     }
+    if (!browserSupported) {
+        return (
+            <div className="flex flex-col items-center gap-2 text-destructive p-4 text-center">
+                <AlertTriangle className="h-8 w-8" />
+                <p className="font-semibold">Browser Not Supported</p>
+                <p className="text-sm">Your browser doesn't support the required features for map rendering. Please try using a modern browser like Chrome, Firefox, or Safari.</p>
+            </div>
+        )
+    }
     if (locations.length > 0) {
         return (
-            <Map
+            <MapComponent
                 {...viewState}
-                onMove={evt => setViewState(evt.viewState)}
+                onMove={(evt: any) => setViewState(evt.viewState)}
                 style={{width: '100%', height: '100%'}}
                 mapStyle="mapbox://styles/mapbox/streets-v11"
                 mapboxAccessToken={mapboxToken}
             >
-                <NavigationControl position="top-right" />
+                <NavigationControlComponent position="top-right" />
                 {locations.map(loc => (
-                    <Marker key={loc.id} longitude={loc.longitude} latitude={loc.latitude}>
+                    <MarkerComponent key={loc.id} longitude={loc.longitude} latitude={loc.latitude}>
                         <div className="text-primary transform -translate-x-1/2 -translate-y-1/2">
                             <Bus className="h-8 w-8" />
                         </div>
-                    </Marker>
+                    </MarkerComponent>
                 ))}
-            </Map>
+            </MapComponent>
         );
     }
     return (
