@@ -4,7 +4,6 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Camera, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { detectFaceAction } from '@/app/actions';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { MapPin } from 'lucide-react';
@@ -12,8 +11,16 @@ import type { StudentJson as StudentType } from '@/lib/data';
 import { Badge } from '@/components/ui/badge';
 import { db } from '@/lib/firebase';
 import { ref as dbRef, push, set, query, orderByChild, equalTo, limitToLast, get, update, endBefore } from 'firebase/database';
-import busData from '@/lib/buses.json';
 import { format } from 'date-fns';
+import * as tf from '@tensorflow/tfjs';
+import { 
+  detectFacesClient, 
+  extractFaceCrop, 
+  generateFaceEmbeddingClient,
+  matchFace,
+  generateStableFaceId,
+  type StoredFaceEmbedding 
+} from '@/lib/face-detection-client';
 
 interface FacialRecognitionFeedProps {
     busId: string;
@@ -57,6 +64,8 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
     const [registeredFaces, setRegisteredFaces] = useState<RegisteredFace[]>([]);
     const [allStudents, setAllStudents] = useState<StudentType[]>([]);
     const [readyToScan, setReadyToScan] = useState(false);
+    const [storedEmbeddings, setStoredEmbeddings] = useState<StoredFaceEmbedding[]>([]);
+    const [busDataState, setBusDataState] = useState<any>({});
 
     // Throttled toast function to prevent spam
     const throttledToast = useCallback((key: string, toastOptions: any, throttleTime = 5000) => {
@@ -72,6 +81,37 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
         get(studentsRef).then(snapshot => {
             if (snapshot.exists()) {
                 setAllStudents(Object.values(snapshot.val()));
+            }
+        });
+
+        // Load bus data from Firebase
+        const busesRef = dbRef(db, 'buses');
+        get(busesRef).then(snapshot => {
+            if (snapshot.exists()) {
+                setBusDataState(snapshot.val());
+            }
+        });
+
+        // Load stored face embeddings for fast client-side matching
+        const embeddingsRef = dbRef(db, 'faceEmbeddings');
+        get(embeddingsRef).then(snapshot => {
+            if (snapshot.exists()) {
+                const embeddingsData = snapshot.val();
+                const embeddings: StoredFaceEmbedding[] = [];
+                
+                for (const studentId in embeddingsData) {
+                    const data = embeddingsData[studentId];
+                    if (data.embedding && data.studentName) {
+                        embeddings.push({
+                            studentId: data.studentId || studentId,
+                            studentName: data.studentName,
+                            embedding: data.embedding,
+                        });
+                    }
+                }
+                
+                setStoredEmbeddings(embeddings);
+                console.log(`Loaded ${embeddings.length} face embeddings for matching`);
             }
         });
 
@@ -433,32 +473,84 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                 const photoDataUri = processingCanvas.toDataURL('image/jpeg', 0.25);
 
                 try {
-                    console.log('Calling face detection API with image size:', processingCanvas.width, 'x', processingCanvas.height);
-                    const result = await detectFaceAction({ photoDataUri, registeredFaces });
-                    console.log('Face detection result:', result);
+                    console.log('Running client-side face detection:', processingCanvas.width, 'x', processingCanvas.height);
                     
-                    const processedFaces = result.faces.map(face => {
-                        const studentInfo = allStudents.find(s => s.name === face.name);
-                        const isCorrectBus = studentInfo && studentInfo.busId === busId;
-                        const isWrongBus = studentInfo && studentInfo.busId !== busId;
-                        const correctBusName = isWrongBus ? busData[studentInfo.busId as keyof typeof busData]?.name : undefined;
-
-                        return {
-                            ...face,
-                            isRecognized: !!face.name,
-                            isWrongBus: isWrongBus,
-                            correctBusName: correctBusName
-                        };
-                    });
+                    // Client-side face detection
+                    const predictions = await detectFacesClient(processingCanvas);
+                    console.log(`Detected ${predictions.length} faces`);
+                    
+                    const processedFaces: Face[] = [];
+                    
+                    for (const prediction of predictions) {
+                        const [x, y, width, height] = [
+                            prediction.topLeft[0],
+                            prediction.topLeft[1],
+                            prediction.bottomRight[0] - prediction.topLeft[0],
+                            prediction.bottomRight[1] - prediction.topLeft[1]
+                        ];
+                        
+                        // Extract face crop
+                        const faceCrop = extractFaceCrop(processingCanvas, { x, y, width, height });
+                        
+                        // Generate embedding
+                        const faceTensor = tf.browser.fromPixels(faceCrop);
+                        const embedding = generateFaceEmbeddingClient(faceTensor);
+                        faceTensor.dispose();
+                        
+                        // Match against stored embeddings
+                        const match = matchFace(embedding, storedEmbeddings);
+                        
+                        // Generate stable ID
+                        const uid = generateStableFaceId(embedding);
+                        
+                        // Determine student info
+                        let studentName: string | undefined;
+                        let matchConfidence = 0;
+                        let isPotentialMatch = false;
+                        let isWrongBus = false;
+                        let correctBusName: string | undefined;
+                        
+                        if (match) {
+                            studentName = match.studentName;
+                            matchConfidence = match.confidence;
+                            isPotentialMatch = match.isPotentialMatch;
+                            
+                            // Check if student is on correct bus
+                            const studentInfo = allStudents.find(s => s.name === studentName);
+                            if (studentInfo) {
+                                isWrongBus = studentInfo.busId !== busId;
+                                if (isWrongBus && busDataState[studentInfo.busId]) {
+                                    correctBusName = busDataState[studentInfo.busId].name;
+                                }
+                            }
+                        }
+                        
+                        processedFaces.push({
+                            boundingBox: {
+                                x: x / processingCanvas.width,
+                                y: y / processingCanvas.height,
+                                width: width / processingCanvas.width,
+                                height: height / processingCanvas.height,
+                            },
+                            confidence: prediction.probability ? prediction.probability[0] : 0.9,
+                            matchConfidence,
+                            isPotentialMatch,
+                            name: studentName,
+                            uid,
+                            isRecognized: !!studentName && !isPotentialMatch,
+                            isWrongBus,
+                            correctBusName,
+                        });
+                    }
 
                     setDetectedFaces(processedFaces);
                     
                     if (processedFaces.length > 0) {
-                        console.log(`Detected ${processedFaces.length} faces:`, processedFaces);
+                        console.log(`Processed ${processedFaces.length} faces with matches:`, processedFaces);
                     }
 
-                    processedFaces.forEach(face => {
-                        handleRecognitionEvent(face, photoDataUri);
+                    processedFaces.forEach((face: Face) => {
+                        handleRecognitionEvent(face, processingCanvas.toDataURL('image/jpeg', 0.7));
                     });
 
                     // OPTIMIZED: Adaptive delay based on detection

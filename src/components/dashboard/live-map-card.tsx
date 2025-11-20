@@ -10,7 +10,7 @@ import { db } from "@/lib/firebase";
 import { ref, onValue } from "firebase/database";
 
 // Dynamically import the Map component with no SSR
-const MapComponent = dynamic(() => import('react-map-gl').then(mod => mod.default), { 
+const MapComponent = dynamic(() => import('react-map-gl').then(mod => mod.Map || mod.default), { 
   ssr: false,
   loading: () => <div className="flex items-center justify-center h-full"><Loader className="h-8 w-8 animate-spin" /></div>
 });
