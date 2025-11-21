@@ -235,67 +235,159 @@ export async function detectFace(input: DetectFaceInput): Promise<DetectFaceOutp
       let faceEmbedding: tf.Tensor2D | null = null;
       
       try {
+        // QUALITY CHECK: Reject faces that are too small or too blurry
+        const faceWidth = detection.box.width;
+        const faceHeight = detection.box.height;
+        const imageWidth = imageTensor.shape[1];
+        const imageHeight = imageTensor.shape[0];
+        
+        // Face must be at least 80x80 pixels and cover at least 3% of image
+        const faceArea = (faceWidth * faceHeight) / (imageWidth * imageHeight);
+        if (faceWidth < 80 || faceHeight < 80 || faceArea < 0.03) {
+          console.log(`⚠️ Rejected face: too small (${faceWidth.toFixed(0)}x${faceHeight.toFixed(0)}, ${(faceArea * 100).toFixed(1)}% of image)`);
+          continue;
+        }
+        
+        // Reject faces with very low detection confidence
+        if (detection.confidence < 0.85) {
+          console.log(`⚠️ Rejected face: low detection confidence (${(detection.confidence * 100).toFixed(1)}%)`);
+          continue;
+        }
+        
         faceTensor = createFaceCrop(imageTensor, detection.box);
         if (faceTensor) {
           faceEmbedding = await getFaceEmbeddings(faceTensor);
           
             if (faceEmbedding) {
+              // Validate embedding quality
+              const embeddingArray = Array.from(faceEmbedding.dataSync());
+              const nonZeroValues = embeddingArray.filter(v => Math.abs(v) > 0.01).length;
+              const embeddingVariance = embeddingArray.reduce((sum, val) => {
+                const mean = embeddingArray.reduce((a, b) => a + b, 0) / embeddingArray.length;
+                return sum + Math.pow(val - mean, 2);
+              }, 0) / embeddingArray.length;
+              
+              // Reject low-quality embeddings (too uniform or too few features)
+              if (nonZeroValues < 200 || embeddingVariance < 0.01) {
+                console.log(`⚠️ Rejected embedding: poor quality (non-zero: ${nonZeroValues}, variance: ${embeddingVariance.toFixed(4)})`);
+                continue;
+              }
+              
               const uid = generateStableId(faceEmbedding);
               let name: string | undefined;
               let matchConfidence = 0;
               let isPotentialMatch = false;
               let potentialMatches: Array<{ name: string; confidence: number }> = [];
 
-              // Define confidence thresholds - OPTIMIZED FOR STUDENTS
-              // Students have consistent features but may appear at different angles/distances
-              // Lowered thresholds to reduce false negatives while maintaining accuracy
-              const HIGH_CONFIDENCE = 0.78;   // Definite match - confident identification
-              const MEDIUM_CONFIDENCE = 0.68;  // Potential match - likely but verify
-              const LOW_CONFIDENCE = 0.58;    // Worth tracking - catch distant/angled faces
+              // Define confidence thresholds - STRICT FOR ACCURATE IDENTIFICATION
+              // Higher thresholds prevent misclassification and false positives
+              // Multi-angle embeddings provide better coverage, so we can be more demanding
+              const HIGH_CONFIDENCE = 0.85;    // Definite match - very confident identification
+              const MEDIUM_CONFIDENCE = 0.78;  // Potential match - requires verification
+              const LOW_CONFIDENCE = 0.70;     // Minimum threshold - unlikely but possible
 
               // Use stored embeddings if available (faster)
               if (input.storedEmbeddings && input.storedEmbeddings.length > 0) {
                 // Track all matches above low confidence threshold
-                const matches: Array<{ name: string; similarity: number }> = [];
+                const matches: Array<{ 
+                  name: string; 
+                  studentId: string;
+                  similarity: number;
+                  allSimilarities?: number[]; // For multi-angle validation
+                }> = [];
                 
                 for (const storedFace of input.storedEmbeddings) {
-                  // Convert stored embedding back to tensor
-                  const storedEmbeddingTensor = tf.tensor2d([storedFace.embedding]);
+                  // Check if this student has multi-angle embeddings
+                  const hasMultiAngle = (storedFace as any).allEmbeddings && 
+                                       (storedFace as any).allEmbeddings.length > 1;
                   
-                  try {
-                    const similarity = cosineSimilarity(faceEmbedding, storedEmbeddingTensor);
-                    if (similarity > LOW_CONFIDENCE) {
-                      matches.push({ name: storedFace.studentName, similarity });
+                  if (hasMultiAngle) {
+                    // Multi-angle matching: check multiple angles for better accuracy
+                    const allSimilarities: number[] = [];
+                    
+                    for (const angleEmb of (storedFace as any).allEmbeddings) {
+                      const storedEmbeddingTensor = tf.tensor2d([angleEmb.embedding]);
+                      try {
+                        const similarity = cosineSimilarity(faceEmbedding, storedEmbeddingTensor);
+                        allSimilarities.push(similarity);
+                      } finally {
+                        storedEmbeddingTensor.dispose();
+                      }
                     }
-                  } finally {
-                    storedEmbeddingTensor.dispose();
+                    
+                    // Use best match from all angles, but require at least 2 angles above threshold
+                    const bestSimilarity = Math.max(...allSimilarities);
+                    const aboveThreshold = allSimilarities.filter(s => s >= LOW_CONFIDENCE).length;
+                    
+                    // STRICT: For multi-angle, require at least 2 angles to match
+                    if (bestSimilarity >= LOW_CONFIDENCE && aboveThreshold >= 2) {
+                      matches.push({ 
+                        name: storedFace.studentName,
+                        studentId: storedFace.studentId,
+                        similarity: bestSimilarity,
+                        allSimilarities
+                      });
+                    }
+                  } else {
+                    // Single embedding matching (legacy or single photo registration)
+                    const storedEmbeddingTensor = tf.tensor2d([storedFace.embedding]);
+                    
+                    try {
+                      const similarity = cosineSimilarity(faceEmbedding, storedEmbeddingTensor);
+                      if (similarity >= LOW_CONFIDENCE) {
+                        matches.push({ 
+                          name: storedFace.studentName,
+                          studentId: storedFace.studentId,
+                          similarity 
+                        });
+                      }
+                    } finally {
+                      storedEmbeddingTensor.dispose();
+                    }
                   }
                 }
 
                 // Sort matches by similarity
                 matches.sort((a, b) => b.similarity - a.similarity);
 
+                // Additional validation: Check if top match is significantly better than second
                 if (matches.length > 0) {
                   const bestMatch = matches[0];
                   matchConfidence = bestMatch.similarity;
-
-                  if (bestMatch.similarity >= HIGH_CONFIDENCE) {
-                    // Strong match - confident identification
-                    name = bestMatch.name;
-                    isPotentialMatch = false;
-                  } else if (bestMatch.similarity >= MEDIUM_CONFIDENCE) {
-                    // Potential match - needs verification
-                    isPotentialMatch = true;
-                    // Store all potential matches above medium confidence
-                    potentialMatches = matches
-                      .filter(m => m.similarity >= MEDIUM_CONFIDENCE)
-                      .map(m => ({ name: m.name, confidence: m.similarity }));
-                  } else if (bestMatch.similarity >= LOW_CONFIDENCE) {
-                    // Low confidence match - track but don't identify
-                    isPotentialMatch = false;
-                    potentialMatches = matches
-                      .filter(m => m.similarity >= LOW_CONFIDENCE)
-                      .map(m => ({ name: m.name, confidence: m.similarity }));
+                  
+                  // If there are multiple matches, ensure the best match is clearly better
+                  if (matches.length > 1) {
+                    const secondBest = matches[1];
+                    const confidenceGap = bestMatch.similarity - secondBest.similarity;
+                    
+                    // Require significant gap (at least 0.10) between best and second match
+                    // This prevents ambiguous matches where two students score similarly
+                    if (confidenceGap < 0.10 && bestMatch.similarity < 0.90) {
+                      // Too close to call - mark as potential matches for both
+                      isPotentialMatch = true;
+                      potentialMatches = matches
+                        .slice(0, 2)
+                        .map(m => ({ name: m.name, confidence: m.similarity }));
+                      matchConfidence = bestMatch.similarity;
+                      name = undefined;
+                    } else if (bestMatch.similarity >= HIGH_CONFIDENCE) {
+                      // Clear winner with high confidence
+                      name = bestMatch.name;
+                      isPotentialMatch = false;
+                    } else if (bestMatch.similarity >= MEDIUM_CONFIDENCE) {
+                      // Potential match - needs verification
+                      isPotentialMatch = true;
+                      potentialMatches = [{ name: bestMatch.name, confidence: bestMatch.similarity }];
+                    }
+                  } else {
+                    // Only one match found
+                    if (bestMatch.similarity >= HIGH_CONFIDENCE) {
+                      name = bestMatch.name;
+                      isPotentialMatch = false;
+                    } else if (bestMatch.similarity >= MEDIUM_CONFIDENCE) {
+                      isPotentialMatch = true;
+                      potentialMatches = [{ name: bestMatch.name, confidence: bestMatch.similarity }];
+                    }
                   }
                 }
               }

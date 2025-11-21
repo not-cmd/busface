@@ -26,6 +26,7 @@ import { StudentIdCard } from '@/components/dashboard/student-id-card';
 import { format } from 'date-fns';
 import { FaceRegistration } from '@/components/dashboard/face-registration';
 import { LoadingScreen } from '@/components/ui/loading-screen';
+import ParentAlertsPanel from '@/components/dashboard/parent-alerts-panel';
 
 
 export default function ParentDashboard() {
@@ -273,6 +274,12 @@ export default function ParentDashboard() {
             </h1>
             <p className="text-muted-foreground">Here is the latest update on your child.</p>
         </div>
+
+        {/* New Proximity and Missed Bus Alerts */}
+        <ParentAlertsPanel 
+          parentId={student.parentId} 
+          studentIds={[student.studentId]} 
+        />
         
         {showMissedBusAlert && <MissedBusAlert studentName={student.name} onStatusUpdate={(status) => handleStatusUpdate(status, student)} />}
 

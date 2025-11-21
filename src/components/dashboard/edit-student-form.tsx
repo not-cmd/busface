@@ -33,12 +33,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { Edit } from 'lucide-react';
+import { Edit, MapPin } from 'lucide-react';
 import busData from '@/lib/buses.json';
 import type { StudentJson as StudentType } from '@/lib/data';
 import { Checkbox } from '../ui/checkbox';
 import { Textarea } from '../ui/textarea';
 import { ScrollArea } from '../ui/scroll-area';
+import { AddressAutocomplete } from './address-autocomplete';
+import { LocationMapPreview } from './location-map-preview';
 
 const studentSchema = z.object({
   studentId: z.string().min(1, 'Student ID is required'),
@@ -46,6 +48,10 @@ const studentSchema = z.object({
   grade: z.string().min(1, 'Grade is required'),
   school: z.string().min(1, 'School is required'),
   address: z.string().min(1, 'Address is required'),
+  homeLocation: z.object({
+    lat: z.number(),
+    lng: z.number(),
+  }).optional(),
   busId: z.string().min(1, 'Please select a bus'),
   profilePhotos: z.any().optional(),
   specialAttention: z.boolean().default(false),
@@ -63,7 +69,26 @@ interface EditStudentFormProps {
 
 export function EditStudentForm({ student, children }: EditStudentFormProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState<{ lat: number; lng: number; address: string } | null>(null);
   const { toast } = useToast();
+
+  // Initialize location from student data
+  useEffect(() => {
+    if (isOpen && student.homeLocation) {
+      setSelectedLocation({
+        lat: student.homeLocation.lat,
+        lng: student.homeLocation.lng,
+        address: student.address,
+      });
+    }
+  }, [isOpen, student]);
+
+  // Handle location selection from autocomplete
+  const handleLocationSelect = (location: { lat: number; lng: number; address: string }) => {
+    setSelectedLocation(location);
+    form.setValue('homeLocation', { lat: location.lat, lng: location.lng });
+    form.setValue('address', location.address);
+  };
 
   const form = useForm<StudentFormValues>({
     resolver: zodResolver(studentSchema),
@@ -222,12 +247,28 @@ export function EditStudentForm({ student, children }: EditStudentFormProps) {
                     <FormItem>
                     <FormLabel>Address</FormLabel>
                     <FormControl>
-                        <Input placeholder="123 Main St, Anytown" {...field} />
+                        <AddressAutocomplete
+                          value={field.value}
+                          onChange={field.onChange}
+                          onLocationSelect={handleLocationSelect}
+                          placeholder="Start typing address..."
+                        />
                     </FormControl>
                     <FormMessage />
                     </FormItem>
                 )}
                 />
+                
+                {/* Map Preview */}
+                {selectedLocation && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <MapPin className="h-4 w-4 text-primary" />
+                      <span>Home location preview</span>
+                    </div>
+                    <LocationMapPreview location={selectedLocation} height="180px" />
+                  </div>
+                )}
                 <FormField
                 control={form.control}
                 name="school"

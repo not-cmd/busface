@@ -20,7 +20,7 @@ import { imageDataUriToTensor, generateStableId } from '@/ai/flows/face-utils';
 import { loadModel } from '@/ai/flows/face-detector';
 import * as tf from '@tensorflow/tfjs';
 import { db } from '@/lib/firebase';
-import { ref, set, get, remove } from 'firebase/database';
+import { ref, set, get, remove, update } from 'firebase/database';
 import studentData from '@/lib/students.json';
 import busData from '@/lib/buses.json';
 
@@ -115,6 +115,25 @@ export async function reviewFaceRegistrationAction(
         name: studentName,
         photos: [...existingData.photos, ...photoUrls],
       });
+
+      // Save the front face photo (first photo) to student's profile
+      if (photoUrls.length > 0) {
+        const studentRef = ref(db, `students/${studentId}`);
+        const studentSnapshot = await get(studentRef);
+        
+        if (studentSnapshot.exists()) {
+          const studentData = studentSnapshot.val();
+          const existingProfilePhotos = studentData.profilePhotos || [];
+          
+          // Add the front face photo to the beginning of the profile photos array
+          await set(ref(db, `students/${studentId}/profilePhotos`), [
+            photoUrls[0], // Front face photo (captured first)
+            ...existingProfilePhotos
+          ]);
+          
+          console.log(`✅ Saved front face photo to ${studentName}'s profile`);
+        }
+      }
 
       // If embeddings exist in pending data, store ALL of them for multi-angle matching
       if (pendingData?.embeddings && pendingData.embeddings.length > 0) {
@@ -353,6 +372,42 @@ export async function getStoredFaceEmbeddingsAction(): Promise<{
     return { success: true, embeddings };
   } catch (error) {
     console.error('Error fetching face embeddings:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    };
+  }
+}
+
+// Handle parent response to missed bus alert
+export async function handleMissedBusResponseAction(
+  alertId: string,
+  studentId: string,
+  response: 'personally_drop' | 'absent_today'
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const alertRef = ref(db, `missedBusAlerts/${alertId}`);
+    await update(alertRef, {
+      parentResponse: response,
+      responseTimestamp: Date.now(),
+    });
+
+    // Update student status
+    const studentRef = ref(db, `students/${studentId}`);
+    const statusMap = {
+      personally_drop: 'Manually Dropped',
+      absent_today: 'Absent Today',
+    };
+
+    await update(studentRef, {
+      status: statusMap[response],
+      lastUpdated: Date.now(),
+    });
+
+    console.log(`✅ Parent response recorded for ${studentId}: ${response}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error handling missed bus response:', error);
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Unknown error' 

@@ -17,6 +17,10 @@ export interface StudentJson {
     profilePhotos: string[];
     busId: string;
     address: string;
+    homeLocation?: {
+        lat: number;
+        lng: number;
+    };
     latitude?: number;
     longitude?: number;
     pickupTime?: string; // Added since it exists in the JSON
@@ -142,6 +146,29 @@ export const alerts: Alert[] = [
 ];
 
 export type StudentStatus = 'On Board' | 'Not Boarded' | 'Absent Today' | 'Manually Dropped' | 'Confirmed Absent' | 'Present' | 'Absent';
+
+// Proximity and Missed Bus Alert Types
+export interface ProximityAlert {
+  id: string;
+  studentId: string;
+  studentName: string;
+  busId: string;
+  distance: number;
+  timestamp: number;
+  notified: boolean;
+}
+
+export interface MissedBusAlert {
+  id: string;
+  studentId: string;
+  studentName: string;
+  busId: string;
+  busName: string;
+  parentId: string;
+  timestamp: number;
+  parentResponse?: 'personally_drop' | 'absent_today' | null;
+  responseTimestamp?: number;
+}
 
 
 // This is the data structure for the Parent Dashboard, which is dynamically generated.

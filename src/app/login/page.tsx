@@ -124,6 +124,20 @@ export default function LoginPage() {
     if (parentCredentials[parentId] && parentCredentials[parentId] === parentPassword) {
       console.log("Parent login successful, setting local storage");
       localStorage.setItem('loggedInParentId', parentId);
+      
+      // Request notification permission for proximity and missed bus alerts
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().then(permission => {
+          console.log('Notification permission:', permission);
+          if (permission === 'granted') {
+            toast({
+              title: 'Notifications Enabled',
+              description: "You'll receive alerts when your child's bus is nearby!",
+            });
+          }
+        });
+      }
+      
       console.log("Redirecting to parent dashboard");
       router.push('/dashboard/parent');
     } else {

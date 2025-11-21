@@ -322,20 +322,25 @@ export function matchFace(
     return null;
   }
   
-  // STRICTER THRESHOLDS: More accurate classification to avoid false positives
-  // With multi-angle embeddings, we can be more demanding for better accuracy
-  const HIGH_CONFIDENCE = 0.55;  // Strong match - very confident
-  const MEDIUM_CONFIDENCE = 0.45; // Decent match - potential
-  const MIN_THRESHOLD = 0.35;     // Minimum to consider a match
+  // STRICT THRESHOLDS: Prevent misclassification and false positives
+  // Higher thresholds ensure accurate identification, especially critical for student safety
+  const HIGH_CONFIDENCE = 0.85;   // Strong match - very confident, definite identification
+  const MEDIUM_CONFIDENCE = 0.78; // Decent match - potential, requires verification
+  const MIN_THRESHOLD = 0.70;     // Minimum to consider a match - very strict
   
   let bestMatch: FaceMatch | null = null;
   let bestSimilarity = 0;
-  const allSimilarities: Array<{ name: string; similarity: number; angle?: number }> = [];
+  let secondBestSimilarity = 0;
+  let secondBestMatch: FaceMatch | null = null;
+  
+  const studentMatches: Map<string, { bestSimilarity: number; angleSimilarities: number[] }> = new Map();
   
   for (const stored of storedEmbeddings) {
     // Try all angles if multi-angle embeddings are available
     if (stored.allEmbeddings && stored.allEmbeddings.length > 1) {
-      // Multi-angle matching: try each angle and use the best match
+      // Multi-angle matching: collect similarities from all angles
+      const angleSimilarities: number[] = [];
+      
       for (const angleEmb of stored.allEmbeddings) {
         const storedArray = new Float32Array(angleEmb.embedding);
         
@@ -344,21 +349,41 @@ export function matchFace(
         }
         
         const similarity = calculateSimilarity(faceEmbedding, storedArray);
-        allSimilarities.push({ 
-          name: stored.studentName, 
-          similarity, 
-          angle: angleEmb.angle 
-        });
+        angleSimilarities.push(similarity);
+      }
+      
+      if (angleSimilarities.length > 0) {
+        const maxSimilarity = Math.max(...angleSimilarities);
+        const aboveThreshold = angleSimilarities.filter(s => s >= MIN_THRESHOLD).length;
         
-        if (similarity > bestSimilarity) {
-          bestSimilarity = similarity;
-          bestMatch = {
-            studentId: stored.studentId,
-            studentName: stored.studentName,
-            confidence: similarity,
-            isHighConfidence: similarity >= HIGH_CONFIDENCE,
-            isPotentialMatch: similarity >= MEDIUM_CONFIDENCE && similarity < HIGH_CONFIDENCE,
-          };
+        // STRICT: For multi-angle, require at least 2 angles above threshold
+        if (maxSimilarity >= MIN_THRESHOLD && aboveThreshold >= 2) {
+          studentMatches.set(stored.studentId, {
+            bestSimilarity: maxSimilarity,
+            angleSimilarities
+          });
+          
+          if (maxSimilarity > bestSimilarity) {
+            secondBestSimilarity = bestSimilarity;
+            secondBestMatch = bestMatch;
+            bestSimilarity = maxSimilarity;
+            bestMatch = {
+              studentId: stored.studentId,
+              studentName: stored.studentName,
+              confidence: maxSimilarity,
+              isHighConfidence: maxSimilarity >= HIGH_CONFIDENCE,
+              isPotentialMatch: maxSimilarity >= MEDIUM_CONFIDENCE && maxSimilarity < HIGH_CONFIDENCE,
+            };
+          } else if (maxSimilarity > secondBestSimilarity) {
+            secondBestSimilarity = maxSimilarity;
+            secondBestMatch = {
+              studentId: stored.studentId,
+              studentName: stored.studentName,
+              confidence: maxSimilarity,
+              isHighConfidence: maxSimilarity >= HIGH_CONFIDENCE,
+              isPotentialMatch: maxSimilarity >= MEDIUM_CONFIDENCE && maxSimilarity < HIGH_CONFIDENCE,
+            };
+          }
         }
       }
     } else {
@@ -371,26 +396,68 @@ export function matchFace(
       }
       
       const similarity = calculateSimilarity(faceEmbedding, storedArray);
-      allSimilarities.push({ name: stored.studentName, similarity });
       
-      if (similarity > bestSimilarity) {
-        bestSimilarity = similarity;
-        bestMatch = {
-          studentId: stored.studentId,
-          studentName: stored.studentName,
-          confidence: similarity,
-          isHighConfidence: similarity >= HIGH_CONFIDENCE,
-          isPotentialMatch: similarity >= MEDIUM_CONFIDENCE && similarity < HIGH_CONFIDENCE,
-        };
+      if (similarity >= MIN_THRESHOLD) {
+        studentMatches.set(stored.studentId, {
+          bestSimilarity: similarity,
+          angleSimilarities: [similarity]
+        });
+        
+        if (similarity > bestSimilarity) {
+          secondBestSimilarity = bestSimilarity;
+          secondBestMatch = bestMatch;
+          bestSimilarity = similarity;
+          bestMatch = {
+            studentId: stored.studentId,
+            studentName: stored.studentName,
+            confidence: similarity,
+            isHighConfidence: similarity >= HIGH_CONFIDENCE,
+            isPotentialMatch: similarity >= MEDIUM_CONFIDENCE && similarity < HIGH_CONFIDENCE,
+          };
+        } else if (similarity > secondBestSimilarity) {
+          secondBestSimilarity = similarity;
+          secondBestMatch = {
+            studentId: stored.studentId,
+            studentName: stored.studentName,
+            confidence: similarity,
+            isHighConfidence: similarity >= HIGH_CONFIDENCE,
+            isPotentialMatch: similarity >= MEDIUM_CONFIDENCE && similarity < HIGH_CONFIDENCE,
+          };
+        }
       }
     }
   }
   
-  // Return best match even with very low threshold for debugging
+  // Validate best match with additional checks
   if (bestMatch && bestSimilarity >= MIN_THRESHOLD) {
-    if (!bestMatch.isHighConfidence && !bestMatch.isPotentialMatch) {
-      bestMatch.isPotentialMatch = true; // Mark as potential for review
+    // Check confidence gap between best and second-best match
+    const confidenceGap = bestSimilarity - secondBestSimilarity;
+    
+    // STRICT: Require significant gap (at least 0.12) between top two matches
+    // This prevents ambiguous situations where two students score similarly
+    if (secondBestMatch && confidenceGap < 0.12 && bestSimilarity < 0.90) {
+      // Too close to call - reject to prevent misidentification
+      console.log(`⚠️ Ambiguous match: ${bestMatch.studentName} (${(bestSimilarity * 100).toFixed(1)}%) vs ${secondBestMatch.studentName} (${(secondBestSimilarity * 100).toFixed(1)}%) - gap too small`);
+      return null;
     }
+    
+    // Additional validation: For medium confidence, be extra cautious
+    if (bestMatch.confidence < HIGH_CONFIDENCE) {
+      // Check if this is a multi-angle match with good coverage
+      const studentData = studentMatches.get(bestMatch.studentId);
+      if (studentData && studentData.angleSimilarities.length > 1) {
+        // Calculate average similarity across angles
+        const avgSimilarity = studentData.angleSimilarities.reduce((a, b) => a + b, 0) / studentData.angleSimilarities.length;
+        
+        // Require average similarity to be at least 75% of best similarity
+        if (avgSimilarity < bestSimilarity * 0.75) {
+          console.log(`⚠️ Inconsistent multi-angle match for ${bestMatch.studentName}: best=${(bestSimilarity * 100).toFixed(1)}%, avg=${(avgSimilarity * 100).toFixed(1)}%`);
+          return null;
+        }
+      }
+    }
+    
+    // All validations passed
     return bestMatch;
   }
   

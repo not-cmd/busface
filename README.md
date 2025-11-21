@@ -30,6 +30,13 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
+### 4. Install as App (Optional)
+GuardianTrack is a **Progressive Web App (PWA)** and can be installed on any device:
+- **Mobile:** Tap "Install App" banner or use browser's "Add to Home Screen"
+- **Desktop:** Click the install icon (⊕) in the address bar
+
+See [INSTALL_GUIDE.md](./INSTALL_GUIDE.md) for detailed installation instructions for all platforms.
+
 ## Technology Stack
 
 The application is built on a modern, robust, and scalable tech stack:

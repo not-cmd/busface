@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { IntruderAlertsCard } from '@/components/dashboard/intruder-alerts-card';
 import { FaceApprovalCard } from '@/components/dashboard/face-approval-card';
 import { Breadcrumbs } from '@/components/breadcrumbs';
+import BusProximityAlerts from '@/components/dashboard/bus-proximity-alerts';
 
 export default function Dashboard() {
   return (
@@ -149,6 +150,7 @@ export default function Dashboard() {
             </div>
             <div className="lg:col-span-2 grid auto-rows-max items-start gap-4 md:gap-8">
                <LiveMapCard />
+               <BusProximityAlerts />
                <FaceApprovalCard />
                <AttendanceSummaryCard />
             </div>
