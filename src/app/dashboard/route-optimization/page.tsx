@@ -1,4 +1,6 @@
 import { RouteOptimizer } from '@/components/dashboard/route-optimizer';
+import { TrafficMonitor } from '@/components/dashboard/traffic-monitor';
+import { SustainabilityDashboard } from '@/components/dashboard/sustainability-dashboard';
 
 export default function RouteOptimizationPage() {
   return (
@@ -10,7 +12,15 @@ export default function RouteOptimizationPage() {
         </p>
       </div>
       
-      <RouteOptimizer busId="bus_101" busName="Bus-101" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2">
+          <RouteOptimizer busId="bus_101" busName="Bus-101" />
+        </div>
+        <div className="space-y-6">
+          <TrafficMonitor busId="bus_101" />
+          <SustainabilityDashboard />
+        </div>
+      </div>
     </div>
   );
 }

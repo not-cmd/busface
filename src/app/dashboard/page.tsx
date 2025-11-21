@@ -57,6 +57,12 @@ export default function Dashboard() {
             Bus Staff
           </Link>
           <Link
+            href="/dashboard/route-optimization"
+            className="text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Route Optimizer
+          </Link>
+          <Link
             href="#"
             className="text-muted-foreground transition-colors hover:text-foreground"
           >
@@ -112,6 +118,12 @@ export default function Dashboard() {
                 className="text-muted-foreground hover:text-foreground"
               >
                 Bus Staff
+              </Link>
+              <Link
+                href="/dashboard/route-optimization"
+                className="text-muted-foreground hover:text-foreground"
+              >
+                Route Optimizer
               </Link>
               <Link
                 href="#"
