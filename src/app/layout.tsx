@@ -2,6 +2,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
+import { ConsoleFilter } from '@/components/console-filter';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 export const metadata: Metadata = {
@@ -25,6 +26,7 @@ export default function RootLayout({
         ></link>
       </head>
       <body className="font-body antialiased">
+        <ConsoleFilter />
         {children}
         <Toaster />
       </body>

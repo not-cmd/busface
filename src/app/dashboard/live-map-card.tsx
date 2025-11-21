@@ -2,10 +2,10 @@
 'use client';
 
 import { useState, useEffect, useMemo } from "react";
-import Map, { Marker, NavigationControl, Popup } from 'react-map-gl';
+import Map, { Marker, NavigationControl, FullscreenControl, GeolocateControl } from 'react-map-gl';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { MapPin, Loader, AlertTriangle, Bus, User, Dot } from "lucide-react"
+import { MapPin, Loader, AlertTriangle, Bus, User, Home } from "lucide-react"
 import { db } from "@/lib/firebase";
 import { ref, onValue } from "firebase/database";
 import type { StudentJson as StudentType } from "@/lib/data";
@@ -139,22 +139,52 @@ export function LiveMapCard({ busId }: LiveMapCardProps) {
                 {...viewState}
                 onMove={evt => setViewState(evt.viewState)}
                 style={{width: '100%', height: '100%'}}
-                mapStyle="mapbox://styles/mapbox/streets-v11"
+                mapStyle="mapbox://styles/mapbox/streets-v12"
                 mapboxAccessToken={mapboxToken}
+                attributionControl={false}
             >
-                <NavigationControl position="top-right" />
+                {/* Navigation Controls */}
+                <NavigationControl position="top-right" style={{marginTop: 10, marginRight: 10}} />
+                
+                {/* Fullscreen Control */}
+                <FullscreenControl position="top-right" style={{marginTop: 100, marginRight: 10}} />
+                
+                {/* Geolocate Control */}
+                <GeolocateControl 
+                    position="top-right" 
+                    style={{marginTop: 145, marginRight: 10}}
+                    trackUserLocation={true}
+                    showUserHeading={true}
+                />
+                
+                {/* Bus Markers with enhanced styling */}
                 {busLocations.map(loc => (
                     <Marker key={loc.id} longitude={loc.longitude} latitude={loc.latitude}>
-                        <div className="transform -translate-x-1/2 -translate-y-1/2" title={`Bus ${loc.id.split('_')[1]}`}>
-                            <Bus className="h-8 w-8" style={{ color: busColors[loc.id] || '#000000', filter: 'drop-shadow(0 0 3px black)' }} />
+                        <div className="relative group cursor-pointer">
+                            {/* Pulsing animation circle */}
+                            <div className="absolute inset-0 animate-ping rounded-full scale-150" style={{ backgroundColor: `${busColors[loc.id] || '#000000'}33` }}></div>
+                            {/* Bus icon with shadow */}
+                            <div className="relative rounded-full p-2 shadow-lg transform transition-transform group-hover:scale-110" style={{ backgroundColor: busColors[loc.id] || '#000000', color: 'white' }}>
+                                <Bus className="h-6 w-6" />
+                            </div>
+                            {/* Tooltip on hover */}
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                                Bus {loc.id.split('_')[1]}
+                            </div>
                         </div>
                     </Marker>
                 ))}
+                
+                {/* Student Location Markers */}
                 {!isSingleBusView && studentLocations.map(student => (
                     student.latitude && student.longitude ? (
                         <Marker key={student.studentId} longitude={student.longitude} latitude={student.latitude}>
-                            <div title={student.name}>
-                                 <User className="h-4 w-4" style={{ color: busColors[student.busId] || '#71717a' }}/>
+                            <div className="group cursor-pointer">
+                                <Home className="h-5 w-5 drop-shadow-md transition-transform group-hover:scale-110" style={{ color: busColors[student.busId] || '#71717a' }}/>
+                                {/* Tooltip on hover */}
+                                <div className="absolute top-full mt-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 left-1/2 transform -translate-x-1/2">
+                                    {student.name}
+                                </div>
                             </div>
                         </Marker>
                     ) : null
@@ -171,39 +201,59 @@ export function LiveMapCard({ busId }: LiveMapCardProps) {
   }
 
   return (
-    <Card>
-        <CardHeader>
+    <Card className="shadow-sm">
+        <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <MapPin className="h-5 w-5 text-primary" />
-                    <CardTitle>Live Bus Tracking</CardTitle>
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-primary/10 rounded-lg">
+                        <MapPin className="h-5 w-5 text-primary" />
+                    </div>
+                    <div>
+                        <CardTitle className="text-xl">Live Bus Tracking</CardTitle>
+                        <CardDescription className="text-sm mt-1">
+                            Real-time location of {busName}
+                        </CardDescription>
+                    </div>
                 </div>
-                <Badge variant={busLocations.length > 0 ? 'default' : 'secondary'}>
+                <Badge variant={busLocations.length > 0 ? 'default' : 'secondary'} className="px-3 py-1">
                     <span className={`relative flex h-2 w-2 mr-2 ${busLocations.length > 0 ? '' : 'hidden'}`}>
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-400"></span>
                     </span>
                     {isLoading ? 'Connecting...' : busLocations.length > 0 ? 'Live' : 'Offline'}
                 </Badge>
             </div>
-            <CardDescription>
-                Real-time location of {busName}
-            </CardDescription>
         </CardHeader>
         <CardContent>
-            <div className="aspect-video w-full rounded-md overflow-hidden border bg-muted flex items-center justify-center">
+            <div className="aspect-video w-full rounded-lg overflow-hidden border-2 bg-muted flex items-center justify-center shadow-inner">
                 {renderContent()}
             </div>
-             {!isSingleBusView && (
-                <div className="mt-4 p-2 border rounded-lg">
-                    <h4 className="text-sm font-semibold mb-2 text-center">Legend</h4>
+            {busLocations.length > 0 && (
+                <div className="mt-4 flex items-center gap-4 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 bg-primary rounded-full"></div>
+                        <span>Active Bus</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <MapPin className="h-3 w-3" />
+                        <span>{busLocations.length} {busLocations.length === 1 ? 'Bus' : 'Buses'} Tracked</span>
+                    </div>
+                    {!isSingleBusView && studentLocations.length > 0 && (
+                        <div className="flex items-center gap-2">
+                            <Home className="h-3 w-3" />
+                            <span>{studentLocations.filter(s => s.latitude && s.longitude).length} Student Homes</span>
+                        </div>
+                    )}
+                </div>
+            )}
+             {!isSingleBusView && busLocations.length > 0 && (
+                <div className="mt-4 p-3 border rounded-lg">
+                    <h4 className="text-sm font-semibold mb-2 text-center">Bus Legend</h4>
                     <div className="flex flex-wrap gap-x-4 gap-y-2 justify-center text-xs">
                         {Object.entries(busColors).map(([busId, color]) => (
                             <div key={busId} className="flex items-center gap-1.5">
                                 <Bus className="h-4 w-4" style={{ color }} />
-                                <span>{`Bus ${busId.split('_')[1]}`}</span>
-                                <User className="h-4 w-4" style={{ color }} />
-                                <span>{`Student Stops`}</span>
+                                <span className="font-medium">{`Bus ${busId.split('_')[1]}`}</span>
                             </div>
                         ))}
                     </div>

@@ -52,12 +52,11 @@ export function SpeedTracker({ busId }: SpeedTrackerProps) {
                     }
                 },
                 (error) => {
-                    console.error("Geolocation error:", error);
-                    toast({
-                        variant: 'destructive',
-                        title: 'Location Error',
-                        description: 'Could not get location. Make sure GPS is enabled.',
-                    });
+                    // Only log errors that aren't timeout related (silent fail for demo mode)
+                    if (error.code !== 3) {
+                        console.warn("Geolocation error:", error.message);
+                    }
+                    // Don't show toast for timeout errors in development
                 },
                 { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
             );

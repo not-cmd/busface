@@ -25,6 +25,14 @@ const NavigationControlComponent = dynamic(() => import('react-map-gl').then(mod
   ssr: false 
 });
 
+const FullscreenControlComponent = dynamic(() => import('react-map-gl').then(mod => mod.FullscreenControl), { 
+  ssr: false 
+});
+
+const GeolocateControlComponent = dynamic(() => import('react-map-gl').then(mod => mod.GeolocateControl), { 
+  ssr: false 
+});
+
 interface RouteMapCardProps {
   busId: string;
   students: StudentType[];
@@ -139,21 +147,51 @@ function RouteMapCardComponent({ busId, students }: RouteMapCardProps) {
                 {...viewState}
                 onMove={(evt: any) => setViewState(evt.viewState)}
                 style={{width: '100%', height: '100%'}}
-                mapStyle="mapbox://styles/mapbox/streets-v11"
+                mapStyle="mapbox://styles/mapbox/streets-v12"
                 mapboxAccessToken={mapboxToken}
+                attributionControl={false}
             >
-                 <NavigationControlComponent position="top-right" />
+                {/* Navigation Controls */}
+                <NavigationControlComponent position="top-right" style={{marginTop: 10, marginRight: 10}} />
+                
+                {/* Fullscreen Control */}
+                <FullscreenControlComponent position="top-right" style={{marginTop: 100, marginRight: 10}} />
+                
+                {/* Geolocate Control - Show user's location */}
+                <GeolocateControlComponent 
+                    position="top-right" 
+                    style={{marginTop: 145, marginRight: 10}}
+                    trackUserLocation={true}
+                    showUserHeading={true}
+                />
+                
+                {/* Bus Marker with enhanced styling */}
                  <MarkerComponent longitude={location.longitude} latitude={location.latitude}>
-                    <div className="text-primary transform -translate-x-1/2 -translate-y-1/2">
-                        <Bus className="h-8 w-8 drop-shadow-lg" />
+                    <div className="relative group cursor-pointer">
+                        {/* Pulsing animation circle */}
+                        <div className="absolute inset-0 animate-ping bg-primary/30 rounded-full scale-150"></div>
+                        {/* Bus icon with shadow */}
+                        <div className="relative bg-primary text-primary-foreground rounded-full p-2 shadow-lg transform transition-transform group-hover:scale-110">
+                            <Bus className="h-6 w-6" />
+                        </div>
+                        {/* Tooltip on hover */}
+                        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                            Bus Location
+                        </div>
                     </div>
                 </MarkerComponent>
+                
+                {/* Student Home Markers */}
                 {students.map((student, index) => (
                     student.latitude && student.longitude ? (
                         <MarkerComponent key={student.studentId} longitude={student.longitude} latitude={student.latitude}>
-                            <div className="transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
-                                <Badge className="bg-blue-500 text-white rounded-full h-6 w-6 flex items-center justify-center mb-1 z-10">{index + 1}</Badge>
-                                <Home className="h-6 w-6 text-blue-800 drop-shadow-md" />
+                            <div className="transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group cursor-pointer">
+                                <Badge className="bg-blue-500 text-white rounded-full h-6 w-6 flex items-center justify-center mb-1 z-10 shadow-md">{index + 1}</Badge>
+                                <Home className="h-6 w-6 text-blue-800 drop-shadow-md transition-transform group-hover:scale-110" />
+                                {/* Tooltip on hover */}
+                                <div className="absolute top-full mt-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20">
+                                    {student.name}
+                                </div>
                             </div>
                         </MarkerComponent>
                     ) : null
@@ -165,16 +203,20 @@ function RouteMapCardComponent({ busId, students }: RouteMapCardProps) {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <MapIcon className="h-6 w-6 text-primary" />
-          <CardTitle>Route Overview</CardTitle>
+    <Card className="shadow-sm">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-primary/10 rounded-lg">
+            <MapIcon className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <CardTitle className="text-xl">Route Overview</CardTitle>
+            <CardDescription className="text-sm mt-1">Live route and student stops</CardDescription>
+          </div>
         </div>
-        <CardDescription>Live route and student stops.</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="aspect-video w-full rounded-md overflow-hidden border bg-muted flex items-center justify-center mb-4">
+        <div className="aspect-video w-full rounded-lg overflow-hidden border-2 bg-muted flex items-center justify-center mb-4 shadow-inner">
           {renderMap()}
         </div>
         <h4 className="font-semibold mb-2 text-sm">Student Stops:</h4>

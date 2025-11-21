@@ -266,12 +266,30 @@ export default function BusStaffDashboard() {
                 <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
             </SheetHeader>
             <nav className="grid gap-6 text-lg font-medium">
-              <Link href="#" className="flex items-center gap-2 text-lg font-semibold">
+              <Link href="/dashboard" className="flex items-center gap-2 text-lg font-semibold">
                 <GuardianTrackLogo className="h-6 w-6" />
                 <span className="sr-only">GuardianTrack</span>
               </Link>
-              <Link href="#" className="hover:text-foreground">
-                Bus Staff Dashboard
+              <Link href="/dashboard" className="text-muted-foreground hover:text-foreground">
+                Dashboard
+              </Link>
+              <Link href="/dashboard/buses" className="text-muted-foreground hover:text-foreground">
+                Buses
+              </Link>
+              <Link href="/dashboard/students" className="text-muted-foreground hover:text-foreground">
+                Students
+              </Link>
+              <Link href="/dashboard/attendance" className="text-muted-foreground hover:text-foreground">
+                Attendance
+              </Link>
+              <Link href="/dashboard/bus-staff" className="hover:text-foreground">
+                Bus Staff
+              </Link>
+              <Link href="/dashboard/route-optimization" className="text-muted-foreground hover:text-foreground">
+                Route Optimizer
+              </Link>
+              <Link href="#" className="text-muted-foreground hover:text-foreground">
+                Settings
               </Link>
             </nav>
           </SheetContent>

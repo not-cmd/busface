@@ -56,14 +56,21 @@ export function useCameraStream(options: CameraStreamOptions) {
     const retryConnection = useRef<() => void>();
 
     const handleError = useCallback((error: Error) => {
-        console.error('Camera stream error:', error);
+        // Suppress network errors for demo mode (hardware camera not available)
+        const isNetworkError = error.message.includes('Failed to fetch') || 
+                              error.message.includes('ERR_NAME_NOT_RESOLVED');
+        
+        if (!isNetworkError) {
+            console.warn('Camera stream error:', error.message);
+        }
+        
         setState(prev => ({ ...prev, error, isConnecting: false }));
         onError?.(error);
 
-        if (retryCount.current < maxRetries) {
+        // Don't retry network errors (hardware camera unavailable)
+        if (!isNetworkError && retryCount.current < maxRetries) {
             retryCount.current++;
             retryTimeout.current = setTimeout(() => {
-                console.log(`Retrying connection (attempt ${retryCount.current}/${maxRetries})...`);
                 retryConnection.current?.();
             }, retryDelay);
         }

@@ -249,13 +249,13 @@ export default function ParentDashboard() {
             </SheetHeader>
             <nav className="grid gap-6 text-lg font-medium">
               <Link
-                href="#"
+                href="/dashboard/parent"
                 className="flex items-center gap-2 text-lg font-semibold"
               >
                 <GuardianTrackLogo className="h-6 w-6" />
                 <span className="sr-only">GuardianTrack</span>
               </Link>
-              <Link href="#" className="hover:text-foreground">
+              <Link href="/dashboard/parent" className="hover:text-foreground">
                 Parent Dashboard
               </Link>
             </nav>

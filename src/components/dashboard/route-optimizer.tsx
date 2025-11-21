@@ -175,6 +175,28 @@ export function RouteOptimizer({ busId, busName }: RouteOptimizerProps) {
         </Alert>
       )}
 
+      {/* Info Alert for Fallback Mode */}
+      {optimizedData && optimizedData.alerts.some(a => a.message.includes('GEMINI_API_KEY')) && (
+        <Alert className="border-blue-200 bg-blue-50">
+          <Zap className="h-4 w-4 text-blue-600" />
+          <AlertDescription className="text-blue-800">
+            <strong>Using Advanced Algorithmic Optimization</strong>
+            <br />
+            The route optimizer is working with a nearest-neighbor algorithm. For AI-powered optimization with natural language insights, 
+            add your <code className="bg-blue-100 px-1 py-0.5 rounded">GEMINI_API_KEY</code> to <code className="bg-blue-100 px-1 py-0.5 rounded">.env.local</code>.
+            <br />
+            <a 
+              href="https://makersuite.google.com/app/apikey" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="underline font-medium mt-1 inline-block hover:text-blue-900"
+            >
+              Get free API key →
+            </a>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {optimizedData && (
         <>
           {/* Key Metrics */}

@@ -2,6 +2,34 @@
 
 GuardianRoute is a comprehensive, AI-enhanced platform designed to ensure the safety and security of students during their school bus commute. It provides real-time tracking, automated attendance, and seamless communication channels for school administrators, bus staff, and parents, creating a transparent and secure ecosystem.
 
+## Quick Setup
+
+### 1. Install Dependencies
+```bash
+npm install
+```
+
+### 2. Configure Environment Variables
+Copy `.env.local` and add your API keys:
+
+```bash
+# Required for maps
+NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN="your_mapbox_token"
+
+# Optional: For AI-powered route optimization
+# Get your free API key from: https://makersuite.google.com/app/apikey
+GEMINI_API_KEY="your_gemini_api_key"
+```
+
+**Note:** Route optimization will work without the Gemini API key using an advanced fallback algorithm based on nearest-neighbor optimization. The AI key enables enhanced intelligent routing with traffic analysis and natural language insights.
+
+### 3. Run Development Server
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser.
+
 ## Technology Stack
 
 The application is built on a modern, robust, and scalable tech stack:
