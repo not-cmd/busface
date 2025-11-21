@@ -546,29 +546,14 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                 const photoDataUri = processingCanvas.toDataURL('image/jpeg', 0.25);
 
                 try {
-                    console.log('Running client-side face detection:', processingCanvas.width, 'x', processingCanvas.height);
-                    
-                    // Debug: Check if processing canvas has actual image data
-                    if (processingCtx) {
-                        const procImageData = processingCtx.getImageData(0, 0, Math.min(10, processingCanvas.width), Math.min(10, processingCanvas.height));
-                        const procAvgPixel = Array.from(procImageData.data).reduce((a, b) => a + b, 0) / procImageData.data.length;
-                        console.log('🎥 Processing canvas sample:', {
-                            avgPixelValue: procAvgPixel.toFixed(2),
-                            firstPixels: Array.from(procImageData.data.slice(0, 12))
-                        });
-                    }
-                    
                     // Client-side face detection with sensitive thresholds
                     // returnTensors=true, iouThreshold=0.3, scoreThreshold=0.5 for better detection
                     const predictions = await detectFacesClient(processingCanvas, true, 0.3, 0.5);
-                    console.log(`Detected ${predictions.length} faces`);
                     
                     // If no faces detected, try with even more sensitive threshold
                     if (predictions.length === 0) {
-                        console.log('No faces detected, retrying with lower threshold (0.3)...');
                         const retryPredictions = await detectFacesClient(processingCanvas, true, 0.3, 0.3);
                         if (retryPredictions.length > 0) {
-                            console.log(`Retry successful! Detected ${retryPredictions.length} faces with lower threshold`);
                             predictions.push(...retryPredictions);
                         }
                     }
@@ -578,7 +563,6 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                     for (const prediction of predictions) {
                         // Validate prediction has required properties
                         if (!prediction.topLeft || !prediction.bottomRight) {
-                            console.error('❌ Invalid prediction format:', prediction);
                             continue;
                         }
                         
@@ -588,7 +572,6 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                         const bottomRightData = Array.from(await prediction.bottomRight.data()) as number[];
                         
                         if (topLeftData.length < 2 || bottomRightData.length < 2) {
-                            console.error('❌ Invalid tensor data:', { topLeftData, bottomRightData });
                             continue;
                         }
                         
@@ -604,69 +587,15 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                         const width = Math.abs(x2 - x1);
                         const height = Math.abs(y2 - y1);
                         
-                        console.log('📐 Bounding box from tensors:', { 
-                            raw: { x1, y1, x2, y2 },
-                            normalized: { x, y, width, height }
-                        });
-                        
                         // Extract face crop
                         const faceCrop = extractFaceCrop(processingCanvas, { x, y, width, height });
-                        
-                        // Debug: Check if face crop has actual image data
-                        const faceCropCtx = faceCrop.getContext('2d');
-                        if (faceCropCtx) {
-                            const faceCropData = faceCropCtx.getImageData(0, 0, faceCrop.width, faceCrop.height);
-                            const avgPixelValue = Array.from(faceCropData.data).reduce((a, b) => a + b, 0) / faceCropData.data.length;
-                            console.log('🖼️ Face crop canvas:', {
-                                width: faceCrop.width,
-                                height: faceCrop.height,
-                                avgPixelValue: avgPixelValue.toFixed(2),
-                                firstPixels: Array.from(faceCropData.data.slice(0, 12))
-                            });
-                        }
                         
                         // Generate embedding
                         const faceTensor = tf.browser.fromPixels(faceCrop);
                         const embedding = generateFaceEmbeddingClient(faceTensor);
                         faceTensor.dispose();
                         
-                        // Debug: Check embedding quality and compare with stored
-                        const embeddingArray = Array.from(embedding);
-                        const nonZeroCount = embeddingArray.filter(v => Math.abs(v) > 0.01).length;
-                        const embeddingMean = embeddingArray.reduce((a, b) => a + b, 0) / embedding.length;
-                        const embeddingStd = Math.sqrt(embeddingArray.reduce((sum, v) => sum + Math.pow(v - embeddingMean, 2), 0) / embedding.length);
-                        
-                        console.group('📸 Generated Embedding Analysis');
-                        console.log('Length:', embedding.length);
-                        console.log('Non-zero values:', nonZeroCount, `(${(nonZeroCount/embedding.length*100).toFixed(1)}%)`);
-                        console.log('Mean:', embeddingMean.toFixed(4));
-                        console.log('Std Dev:', embeddingStd.toFixed(4));
-                        console.log('Min:', Math.min(...embeddingArray).toFixed(4));
-                        console.log('Max:', Math.max(...embeddingArray).toFixed(4));
-                        console.log('First 10 values:', embeddingArray.slice(0, 10).map(v => v.toFixed(4)));
-                        
-                        // Compare with stored embeddings
-                        if (storedEmbeddings.length > 0) {
-                            const firstStored = storedEmbeddings[0].embedding;
-                            const storedArray: number[] = Array.isArray(firstStored) ? firstStored : Array.from(firstStored as ArrayLike<number>);
-                            const storedMean = storedArray.reduce((a, b) => a + b, 0) / storedArray.length;
-                            const storedStd = Math.sqrt(storedArray.reduce((sum, v) => sum + Math.pow(v - storedMean, 2), 0) / storedArray.length);
-                            
-                            console.log('\n📚 Comparing with stored embedding for:', storedEmbeddings[0].studentName);
-                            console.log('Stored Mean:', storedMean.toFixed(4), 'vs Generated:', embeddingMean.toFixed(4));
-                            console.log('Stored Std:', storedStd.toFixed(4), 'vs Generated:', embeddingStd.toFixed(4));
-                            console.log('Stored First 10:', storedArray.slice(0, 10).map(v => v.toFixed(4)));
-                            
-                            const meanDiff = Math.abs(storedMean - embeddingMean);
-                            const stdDiff = Math.abs(storedStd - embeddingStd);
-                            
-                            if (meanDiff > 1.0 || stdDiff > 1.0) {
-                                console.warn('⚠️ LARGE DIFFERENCE detected between generated and stored embeddings!');
-                                console.warn('Mean difference:', meanDiff.toFixed(4), '| Std difference:', stdDiff.toFixed(4));
-                                console.warn('This indicates client-side and server-side generation are NOT compatible!');
-                            }
-                        }
-                        console.groupEnd();
+                        // Embedding generated (verbose logging removed for performance)
                         
                         // Match against stored embeddings
                         const match = matchFace(embedding, storedEmbeddings);
@@ -715,10 +644,6 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                     }
 
                     setDetectedFaces(processedFaces);
-                    
-                    if (processedFaces.length > 0) {
-                        console.log(`Processed ${processedFaces.length} faces with matches:`, processedFaces);
-                    }
 
                     processedFaces.forEach((face: Face) => {
                         handleRecognitionEvent(face, processingCanvas.toDataURL('image/jpeg', 0.7));

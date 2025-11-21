@@ -53,7 +53,7 @@ export async function detectFacesClient(
     // Lower scoreThreshold (0.5 instead of 0.75) to catch more faces
     const predictions = await model.estimateFaces(tensor, returnTensors, iouThreshold, scoreThreshold);
     
-    console.log(`BlazeFace detected ${predictions.length} faces with scoreThreshold=${scoreThreshold}`);
+    // Faces detected (logging disabled for performance)
     
     // Clean up
     tensor.dispose();
@@ -167,16 +167,7 @@ export function generateFaceEmbeddingClient(faceTensor: tf.Tensor3D): Float32Arr
     
     const result = normalizedFeatures.dataSync() as Float32Array;
     
-    // Debug: Log normalization info
-    console.log('🔧 Client-side embedding generation:', {
-      beforeNorm_mean: featuresMean.dataSync()[0].toFixed(4),
-      beforeNorm_std: featuresStd.dataSync()[0].toFixed(4),
-      afterNorm_mean: (Array.from(result).reduce((a, b) => a + b, 0) / result.length).toFixed(4),
-      afterNorm_std: Math.sqrt(Array.from(result).reduce((sum, v) => {
-        const mean = Array.from(result).reduce((a, b) => a + b, 0) / result.length;
-        return sum + Math.pow(v - mean, 2);
-      }, 0) / result.length).toFixed(4)
-    });
+    // Embedding normalized (logging disabled for performance)
     
     return result;
   });
@@ -265,44 +256,12 @@ export function extractFaceCrop(
     return faceCanvas;
   }
   
-  // Debug: Log what we're trying to extract
-  console.log('🔍 extractFaceCrop params:', {
-    sourceCanvas: `${canvas.width}x${canvas.height}`,
-    boundingBox,
-    paddedRegion: { paddedX, paddedY, paddedWidth, paddedHeight },
-    targetSize: '160x160'
-  });
-  
-  // Check if source canvas has data
-  const sourceCtx = canvas.getContext('2d');
-  if (sourceCtx) {
-    try {
-      // Ensure we have valid integer coordinates for getImageData
-      const sampleX = Math.max(0, Math.floor(paddedX));
-      const sampleY = Math.max(0, Math.floor(paddedY));
-      const sampleWidth = Math.max(1, Math.min(10, Math.floor(paddedWidth)));
-      const sampleHeight = Math.max(1, Math.min(10, Math.floor(paddedHeight)));
-      
-      if (sampleX + sampleWidth <= canvas.width && sampleY + sampleHeight <= canvas.height) {
-        const sourceData = sourceCtx.getImageData(sampleX, sampleY, sampleWidth, sampleHeight);
-        const sourceAvg = Array.from(sourceData.data).reduce((a, b) => a + b, 0) / sourceData.data.length;
-        console.log('🎨 Source canvas sample at crop location:', sourceAvg.toFixed(2));
-      } else {
-        console.warn('⚠️ Sample region out of canvas bounds');
-      }
-    } catch (e) {
-      console.error('❌ Failed to read source canvas data:', e);
-    }
-  }
-  
   // Draw with explicit integer coordinates, ensuring they're within bounds
   try {
     const srcX = Math.max(0, Math.min(canvas.width - 1, Math.floor(paddedX)));
     const srcY = Math.max(0, Math.min(canvas.height - 1, Math.floor(paddedY)));
     const srcW = Math.max(1, Math.min(canvas.width - srcX, Math.floor(paddedWidth)));
     const srcH = Math.max(1, Math.min(canvas.height - srcY, Math.floor(paddedHeight)));
-    
-    console.log('📐 Final draw coords:', { srcX, srcY, srcW, srcH });
     
     ctx.drawImage(
       canvas,
@@ -349,7 +308,6 @@ export function matchFace(
   storedEmbeddings: StoredFaceEmbedding[]
 ): FaceMatch | null {
   if (storedEmbeddings.length === 0) {
-    console.log('No stored embeddings available for matching');
     return null;
   }
   
@@ -364,15 +322,11 @@ export function matchFace(
   let bestSimilarity = 0;
   const allSimilarities: Array<{ name: string; similarity: number }> = [];
   
-  console.log(`Matching against ${storedEmbeddings.length} stored embeddings`);
-  console.log(`Face embedding length: ${faceEmbedding.length}`);
-  
   for (const stored of storedEmbeddings) {
     const storedArray = new Float32Array(stored.embedding);
     
     // Validate stored embedding
     if (storedArray.length !== faceEmbedding.length) {
-      console.warn(`Embedding size mismatch for ${stored.studentName}: ${storedArray.length} vs ${faceEmbedding.length}`);
       continue;
     }
     
@@ -391,35 +345,14 @@ export function matchFace(
     }
   }
   
-  // Debug logging with detailed analysis
-  console.group('🔍 Face Matching Analysis');
-  console.log('📊 All similarity scores (sorted):', allSimilarities.sort((a, b) => b.similarity - a.similarity));
-  console.log('🎯 Best match:', bestMatch ? `${bestMatch.studentName} (${(bestMatch.confidence * 100).toFixed(1)}%)` : 'None');
-  console.log('📈 Highest similarity score:', bestSimilarity.toFixed(4));
-  console.log('🎚️ Thresholds: HIGH=' + HIGH_CONFIDENCE + ', MEDIUM=' + MEDIUM_CONFIDENCE + ', MIN=' + MIN_THRESHOLD);
-  
-  // Check if embeddings are too different (might indicate different generation methods)
-  if (allSimilarities.length > 0) {
-    const avgSimilarity = allSimilarities.reduce((sum, s) => sum + s.similarity, 0) / allSimilarities.length;
-    console.log('📉 Average similarity across all students:', avgSimilarity.toFixed(4));
-    
-    if (avgSimilarity < 0.1) {
-      console.warn('⚠️ Very low average similarity! Embeddings might be incompatible.');
-      console.warn('💡 This suggests client-side and server-side embedding generation are producing different results.');
-    }
-  }
-  console.groupEnd();
-  
   // Return best match even with very low threshold for debugging
   if (bestMatch && bestSimilarity >= MIN_THRESHOLD) {
     if (!bestMatch.isHighConfidence && !bestMatch.isPotentialMatch) {
-      console.log(`🔶 Low confidence match: ${bestMatch.studentName} at ${(bestSimilarity * 100).toFixed(1)}%`);
       bestMatch.isPotentialMatch = true; // Mark as potential for review
     }
     return bestMatch;
   }
   
-  console.log('❌ No matches found above minimum threshold of ' + MIN_THRESHOLD);
   return null;
 }
 
