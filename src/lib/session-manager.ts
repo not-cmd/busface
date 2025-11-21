@@ -56,9 +56,9 @@ export async function checkExistingSession(staffId: string, busId: string): Prom
         for (const sessionId in sessions) {
             const session = sessions[sessionId] as StaffSession;
             if (session.staffId === staffId) {
-                // Check if session is still active (within last 5 minutes)
+                // Check if session is still active (within last 10 minutes - increased for stability)
                 const now = Date.now();
-                if (now - session.lastActive < 5 * 60 * 1000) {
+                if (now - session.lastActive < 10 * 60 * 1000) {
                     return session;
                 } else {
                     // Clean up stale session
@@ -191,7 +191,7 @@ export async function getActiveSessions(busId: string): Promise<StaffSession[]> 
 }
 
 /**
- * Clean up stale sessions (older than 5 minutes of inactivity)
+ * Clean up stale sessions (older than 10 minutes of inactivity - increased for stability)
  */
 export async function cleanupStaleSessions(busId: string): Promise<void> {
     const sessionsRef = ref(db, `staffSessions/${busId}`);
@@ -200,11 +200,12 @@ export async function cleanupStaleSessions(busId: string): Promise<void> {
     if (snapshot.exists()) {
         const sessions = snapshot.val();
         const now = Date.now();
-        const staleThreshold = 5 * 60 * 1000; // 5 minutes
+        const staleThreshold = 10 * 60 * 1000; // 10 minutes - more forgiving for development and network issues
         
         for (const sessionId in sessions) {
             const session = sessions[sessionId] as StaffSession;
             if (now - session.lastActive > staleThreshold) {
+                console.log(`Cleaning up stale session: ${sessionId} (inactive for ${Math.round((now - session.lastActive) / 60000)} minutes)`);
                 await removeSession(busId, sessionId);
             }
         }

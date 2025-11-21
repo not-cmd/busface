@@ -71,62 +71,96 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
     }
 
     setIsSubmitting(true);
-    toast({ title: "Processing Images...", description: "Generating face embeddings for registration." });
-
+    
+    // Store photos immediately and show success
+    const pendingFacesRef = dbRef(db, `pendingFaceRegistrations`);
+    const newPendingRef = push(pendingFacesRef);
+    
     try {
-        // Generate embeddings for all captured images
-        const embeddingPromises = capturedImagesRef.current.map(async (photoDataUri, index) => {
-          const result = await generateFaceEmbeddingAction(photoDataUri, studentId, studentName);
-          return {
-            photoDataUri,
-            embedding: result.embedding,
-            uid: result.uid,
-            success: result.success,
-            error: result.error,
-            index
-          };
-        });
-
-        const embeddingResults = await Promise.all(embeddingPromises);
-        const successfulEmbeddings = embeddingResults.filter(result => result.success);
-
-        if (successfulEmbeddings.length === 0) {
-          toast({ 
-            variant: 'destructive', 
-            title: "Registration Failed", 
-            description: "Could not generate face embeddings from any photos. Please try again." 
-          });
-          return;
-        }
-
-        // Store in pending registrations with embeddings
-        const pendingFacesRef = dbRef(db, `pendingFaceRegistrations`);
-        const newPendingRef = push(pendingFacesRef);
-        
+        // Save with processing status first
         await set(newPendingRef, {
             studentId,
             studentName,
-            status: 'pending',
+            status: 'processing',
             photos: capturedImagesRef.current,
-            embeddings: successfulEmbeddings.map(result => ({
-              photoDataUri: result.photoDataUri,
-              embedding: result.embedding,
-              uid: result.uid
-            })),
+            embeddings: [],
             timestamp: new Date().toISOString(),
-            embeddingCount: successfulEmbeddings.length
+            embeddingCount: 0
         });
 
         toast({
             title: "Registration Submitted!",
-            description: `Generated ${successfulEmbeddings.length} face embeddings. Admin will review your registration.`,
+            description: "Processing face embeddings in the background. You'll be notified when ready for review.",
             className: 'bg-green-100 border-green-300 text-green-800'
         });
+
+        if(isComponentMounted.current) {
+            setIsSubmitting(false);
+            setCurrentPromptIndex(0);
+            capturedImagesRef.current = [];
+        }
+
+        // Process embeddings in the background (non-blocking)
+        (async () => {
+            try {
+                console.log('🔄 Starting background embedding generation...');
+                
+                const embeddingPromises = capturedImagesRef.current.map(async (photoDataUri, index) => {
+                  const result = await generateFaceEmbeddingAction(photoDataUri, studentId, studentName);
+                  console.log(`✅ Embedding ${index + 1}/${capturedImagesRef.current.length} generated`);
+                  return {
+                    photoDataUri,
+                    embedding: result.embedding,
+                    uid: result.uid,
+                    success: result.success,
+                    error: result.error,
+                    index
+                  };
+                });
+
+                const embeddingResults = await Promise.all(embeddingPromises);
+                const successfulEmbeddings = embeddingResults.filter(result => result.success);
+
+                console.log(`✅ Generated ${successfulEmbeddings.length}/${embeddingResults.length} embeddings`);
+
+                // Update the pending registration with embeddings
+                await set(newPendingRef, {
+                    studentId,
+                    studentName,
+                    status: successfulEmbeddings.length > 0 ? 'pending' : 'failed',
+                    photos: capturedImagesRef.current,
+                    embeddings: successfulEmbeddings.map(result => ({
+                      photoDataUri: result.photoDataUri,
+                      embedding: result.embedding,
+                      uid: result.uid
+                    })),
+                    timestamp: new Date().toISOString(),
+                    embeddingCount: successfulEmbeddings.length,
+                    processingCompleted: new Date().toISOString()
+                });
+
+                console.log('✅ Background processing complete, registration updated');
+
+            } catch (error) {
+                console.error("❌ Error in background embedding generation:", error);
+                // Update status to failed
+                await set(newPendingRef, {
+                    studentId,
+                    studentName,
+                    status: 'failed',
+                    photos: capturedImagesRef.current,
+                    embeddings: [],
+                    timestamp: new Date().toISOString(),
+                    embeddingCount: 0,
+                    error: error instanceof Error ? error.message : 'Unknown error',
+                    processingCompleted: new Date().toISOString()
+                });
+            }
+        })();
 
     } catch (error) {
         console.error("Error submitting face for registration:", error);
         toast({ variant: 'destructive', title: "Submission Failed", description: "Could not submit facial registration data." });
-    } finally {
         if(isComponentMounted.current) {
             setIsSubmitting(false);
             setCurrentPromptIndex(0);

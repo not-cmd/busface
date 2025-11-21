@@ -109,12 +109,28 @@ export default function BusStaffDashboard() {
       }
     );
 
-    // Update session activity every 30 seconds
-    const activityInterval = setInterval(() => {
-      if (!sessionTakenOver) {
+    // Update session activity every 20 seconds (more frequent to prevent timeout)
+    // Only update when page is visible to reduce Firebase calls
+    let activityInterval: NodeJS.Timeout | null = null;
+    
+    const updateActivity = () => {
+      if (!sessionTakenOver && !document.hidden) {
         updateSessionActivity(loggedInBusId, sessionId);
       }
-    }, 30000);
+    };
+    
+    // Start interval
+    activityInterval = setInterval(updateActivity, 20000);
+    
+    // Handle visibility change
+    const handleVisibilityChange = () => {
+      if (!document.hidden && !sessionTakenOver) {
+        // Page became visible, update immediately
+        updateSessionActivity(loggedInBusId, sessionId);
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     let unsubscribeAttendance: (() => void) | null = null;
     
@@ -160,15 +176,17 @@ export default function BusStaffDashboard() {
             unsubscribeAttendance();
         }
         unsubscribeSession();
-        clearInterval(activityInterval);
-        unsubscribeBus();
-        
-        // Clean up session on unmount
-        if (sessionId && loggedInBusId && !sessionTakenOver) {
-          removeSession(loggedInBusId, sessionId);
+        if (activityInterval) {
+            clearInterval(activityInterval);
         }
+        unsubscribeBus();
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        
+        // DON'T remove session on cleanup in development
+        // Only remove on explicit logout or when navigating away
+        // The session will be cleaned up by stale session cleanup
     };
-  }, []); // Empty dependency array to run only once
+  }, [router, toast]); // Only depend on router and toast
 
   const studentsOnBus = useMemo(() => studentsForBus, [studentsForBus]);
 

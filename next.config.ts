@@ -28,7 +28,7 @@ const nextConfig: NextConfig = {
           },
           {
             key: 'Content-Security-Policy',
-            value: "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: mediastream: filesystem: https://*.firebasedatabase.app https://*.firebaseapp.com https://*.googleapis.com https://*.firebasestorage.app; media-src 'self' mediastream: blob:; connect-src 'self' https://* wss://* https://*.firebasedatabase.app https://*.firebaseapp.com https://*.googleapis.com https://*.google.com https://*.firebasestorage.app; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebasedatabase.app https://*.firebaseapp.com https://*.googleapis.com https://*.google.com https://*.firebasestorage.app; font-src 'self' https://fonts.gstatic.com;"
+            value: "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: mediastream: filesystem: https://*.firebasedatabase.app https://*.firebaseapp.com https://*.googleapis.com https://*.firebasestorage.app https://placehold.co; img-src 'self' data: blob: https://*.firebasedatabase.app https://*.firebaseapp.com https://*.googleapis.com https://*.firebasestorage.app https://placehold.co https://api.mapbox.com; media-src 'self' mediastream: blob: data:; connect-src 'self' https://* wss://* http://*.local:* https://*.local:* https://*.firebasedatabase.app https://*.firebaseapp.com https://*.googleapis.com https://*.google.com https://*.firebasestorage.app; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.firebasedatabase.app https://*.firebaseapp.com https://*.googleapis.com https://*.google.com https://*.firebasestorage.app; worker-src 'self' blob:; child-src 'self' blob:; font-src 'self' data: https://fonts.gstatic.com;"
           },
           {
             key: 'X-Frame-Options',
