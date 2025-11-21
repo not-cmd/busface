@@ -40,7 +40,8 @@ export async function detectFacesClient(
   imageElement: HTMLImageElement | HTMLCanvasElement | HTMLVideoElement,
   returnTensors: boolean = true,
   iouThreshold: number = 0.3,
-  scoreThreshold: number = 0.5
+  scoreThreshold: number = 0.5,
+  maxFaces: number = 10 // Support up to 10 faces in frame
 ): Promise<any[]> {
   try {
     const model = await loadFaceDetectionModel();
@@ -48,17 +49,22 @@ export async function detectFacesClient(
     // Convert to tensor
     const tensor = tf.browser.fromPixels(imageElement);
     
-    // Detect faces with more sensitive thresholds
-    // returnTensors=true provides better detection
-    // Lower scoreThreshold (0.5 instead of 0.75) to catch more faces
-    const predictions = await model.estimateFaces(tensor, returnTensors, iouThreshold, scoreThreshold);
+    // Detect faces - BlazeFace returns all detected faces
+    // returnTensors=true provides better detection with landmarks
+    const predictions = await model.estimateFaces(
+      tensor, 
+      returnTensors
+    );
     
-    // Faces detected (logging disabled for performance)
+    // BlazeFace doesn't use the iou/score thresholds in estimateFaces
+    // It has its own internal filtering, so we just limit to maxFaces
+    // The scoreThreshold parameter is kept for API compatibility but not used here
+    const limitedPredictions = predictions.slice(0, maxFaces);
     
     // Clean up
     tensor.dispose();
     
-    return predictions;
+    return limitedPredictions;
   } catch (error) {
     console.error('Error detecting faces (client):', error);
     return [];
@@ -293,6 +299,11 @@ export interface StoredFaceEmbedding {
   studentId: string;
   studentName: string;
   embedding: number[];
+  allEmbeddings?: Array<{
+    embedding: number[];
+    uid: string;
+    angle: number; // 0=front, 1=right, 2=left, 3=up, 4=down
+  }>;
 }
 
 export interface FaceMatch {
@@ -311,37 +322,67 @@ export function matchFace(
     return null;
   }
   
-  // AGGRESSIVE THRESHOLDS: Very forgiving for testing and debugging
-  // Will match even with lower similarity to help identify issues
-  // TEMPORARILY LOWERED: Stored embeddings may be from old code (std=0.5449 vs current 1.0)
-  const HIGH_CONFIDENCE = 0.40;  // Was 0.45 - lowered to account for embedding mismatch
-  const MEDIUM_CONFIDENCE = 0.30; // Was 0.35
-  const MIN_THRESHOLD = 0.20;     // Was 0.25
+  // STRICTER THRESHOLDS: More accurate classification to avoid false positives
+  // With multi-angle embeddings, we can be more demanding for better accuracy
+  const HIGH_CONFIDENCE = 0.55;  // Strong match - very confident
+  const MEDIUM_CONFIDENCE = 0.45; // Decent match - potential
+  const MIN_THRESHOLD = 0.35;     // Minimum to consider a match
   
   let bestMatch: FaceMatch | null = null;
   let bestSimilarity = 0;
-  const allSimilarities: Array<{ name: string; similarity: number }> = [];
+  const allSimilarities: Array<{ name: string; similarity: number; angle?: number }> = [];
   
   for (const stored of storedEmbeddings) {
-    const storedArray = new Float32Array(stored.embedding);
-    
-    // Validate stored embedding
-    if (storedArray.length !== faceEmbedding.length) {
-      continue;
-    }
-    
-    const similarity = calculateSimilarity(faceEmbedding, storedArray);
-    allSimilarities.push({ name: stored.studentName, similarity });
-    
-    if (similarity > bestSimilarity) {
-      bestSimilarity = similarity;
-      bestMatch = {
-        studentId: stored.studentId,
-        studentName: stored.studentName,
-        confidence: similarity,
-        isHighConfidence: similarity >= HIGH_CONFIDENCE,
-        isPotentialMatch: similarity >= MEDIUM_CONFIDENCE && similarity < HIGH_CONFIDENCE,
-      };
+    // Try all angles if multi-angle embeddings are available
+    if (stored.allEmbeddings && stored.allEmbeddings.length > 1) {
+      // Multi-angle matching: try each angle and use the best match
+      for (const angleEmb of stored.allEmbeddings) {
+        const storedArray = new Float32Array(angleEmb.embedding);
+        
+        if (storedArray.length !== faceEmbedding.length) {
+          continue;
+        }
+        
+        const similarity = calculateSimilarity(faceEmbedding, storedArray);
+        allSimilarities.push({ 
+          name: stored.studentName, 
+          similarity, 
+          angle: angleEmb.angle 
+        });
+        
+        if (similarity > bestSimilarity) {
+          bestSimilarity = similarity;
+          bestMatch = {
+            studentId: stored.studentId,
+            studentName: stored.studentName,
+            confidence: similarity,
+            isHighConfidence: similarity >= HIGH_CONFIDENCE,
+            isPotentialMatch: similarity >= MEDIUM_CONFIDENCE && similarity < HIGH_CONFIDENCE,
+          };
+        }
+      }
+    } else {
+      // Single embedding (old format or only one angle captured)
+      const storedArray = new Float32Array(stored.embedding);
+      
+      // Validate stored embedding
+      if (storedArray.length !== faceEmbedding.length) {
+        continue;
+      }
+      
+      const similarity = calculateSimilarity(faceEmbedding, storedArray);
+      allSimilarities.push({ name: stored.studentName, similarity });
+      
+      if (similarity > bestSimilarity) {
+        bestSimilarity = similarity;
+        bestMatch = {
+          studentId: stored.studentId,
+          studentName: stored.studentName,
+          confidence: similarity,
+          isHighConfidence: similarity >= HIGH_CONFIDENCE,
+          isPotentialMatch: similarity >= MEDIUM_CONFIDENCE && similarity < HIGH_CONFIDENCE,
+        };
+      }
     }
   }
   

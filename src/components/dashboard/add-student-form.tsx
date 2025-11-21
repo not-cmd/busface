@@ -129,178 +129,228 @@ export function AddStudentForm() {
           </span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-2xl">
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col max-h-[90vh]">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col max-h-[85vh]">
             <DialogHeader>
-              <DialogTitle>Add New Student</DialogTitle>
-              <DialogDescription>
-                Fill in the details below to register a new student. A parent login will be created automatically.
+              <DialogTitle className="text-2xl font-bold">Add New Student</DialogTitle>
+              <DialogDescription className="text-base">
+                Fill in the details below to register a new student. A parent login will be created automatically with username as student name and password: <span className="font-semibold text-foreground">pass@123</span>
               </DialogDescription>
             </DialogHeader>
-            <ScrollArea className="flex-grow my-4">
-              <div className="space-y-4 pr-6">
-                <FormField
-                  control={form.control}
-                  name="studentId"
-                  render={({ field }) => (
-                      <FormItem>
-                      <FormLabel>Student ID</FormLabel>
-                      <FormControl>
-                          <Input placeholder="e.g., 60018230071" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                      </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="name"
-                  render={({ field }) => (
-                      <FormItem>
-                      <FormLabel>Full Name (used for Parent ID)</FormLabel>
-                      <FormControl>
-                          <Input placeholder="Jane Doe" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                      </FormItem>
-                  )}
-                />
-                <div className="grid grid-cols-2 gap-4">
-                    <FormField
+            <ScrollArea className="flex-grow my-6">
+              <div className="space-y-5 pr-6">
+                {/* Personal Information Section */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Personal Information</h3>
+                  <FormField
                     control={form.control}
-                    name="age"
+                    name="studentId"
                     render={({ field }) => (
                         <FormItem>
-                        <FormLabel>Age</FormLabel>
+                        <FormLabel className="text-base">Student ID *</FormLabel>
                         <FormControl>
-                            <Input type="number" placeholder="10" {...field} />
+                            <Input placeholder="e.g., 60018230071" className="h-11" {...field} />
                         </FormControl>
                         <FormMessage />
                         </FormItem>
                     )}
-                    />
+                  />
+                  <FormField
+                    control={form.control}
+                    name="name"
+                    render={({ field }) => (
+                        <FormItem>
+                        <FormLabel className="text-base">Full Name *</FormLabel>
+                        <FormControl>
+                            <Input placeholder="e.g., Jane Doe" className="h-11" {...field} />
+                        </FormControl>
+                        <FormDescription>This will be used as the Parent Login ID</FormDescription>
+                        <FormMessage />
+                        </FormItem>
+                    )}
+                  />
+                </div>
+                
+                {/* Academic Information Section */}
+                <div className="space-y-4 pt-2">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Academic Information</h3>
+                  <div className="grid grid-cols-3 gap-4">
                     <FormField
                         control={form.control}
                         name="grade"
                         render={({ field }) => (
                             <FormItem>
-                            <FormLabel>Grade</FormLabel>
-                            <FormControl>
-                                <Input placeholder="e.g., 5th" {...field} />
-                            </FormControl>
+                            <FormLabel className="text-base">Class/Grade *</FormLabel>
+                            <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                <FormControl>
+                                <SelectTrigger className="h-11">
+                                    <SelectValue placeholder="Select class" />
+                                </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                <SelectItem value="Nursery">Nursery</SelectItem>
+                                <SelectItem value="LKG">LKG</SelectItem>
+                                <SelectItem value="UKG">UKG</SelectItem>
+                                <SelectItem value="1st">1st</SelectItem>
+                                <SelectItem value="2nd">2nd</SelectItem>
+                                <SelectItem value="3rd">3rd</SelectItem>
+                                <SelectItem value="4th">4th</SelectItem>
+                                <SelectItem value="5th">5th</SelectItem>
+                                <SelectItem value="6th">6th</SelectItem>
+                                <SelectItem value="7th">7th</SelectItem>
+                                <SelectItem value="8th">8th</SelectItem>
+                                <SelectItem value="9th">9th</SelectItem>
+                                <SelectItem value="10th">10th</SelectItem>
+                                <SelectItem value="11th">11th</SelectItem>
+                                <SelectItem value="12th">12th</SelectItem>
+                                </SelectContent>
+                            </Select>
                             <FormMessage />
                             </FormItem>
                         )}
-                        />
-                </div>
-                <FormField
+                    />
+                    <FormField
+                      control={form.control}
+                      name="section"
+                      render={({ field }) => (
+                          <FormItem>
+                          <FormLabel className="text-base">Section *</FormLabel>
+                          <FormControl>
+                              <Input placeholder="e.g., A" className="h-11" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                          </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="age"
+                      render={({ field }) => (
+                          <FormItem>
+                          <FormLabel className="text-base">Age *</FormLabel>
+                          <FormControl>
+                              <Input type="number" placeholder="10" className="h-11" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                          </FormItem>
+                      )}
+                    />
+                  </div>
+                  <FormField
                     control={form.control}
-                    name="section"
+                    name="school"
                     render={({ field }) => (
                         <FormItem>
-                        <FormLabel>Section</FormLabel>
+                        <FormLabel className="text-base">School</FormLabel>
                         <FormControl>
-                            <Input placeholder="e.g., B" {...field} />
+                            <Input {...field} disabled className="h-11 bg-muted" />
                         </FormControl>
                         <FormMessage />
                         </FormItem>
                     )}
-                    />
-                <FormField
-                  control={form.control}
-                  name="busId"
-                  render={({ field }) => (
-                      <FormItem>
-                      <FormLabel>Assign Bus</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value}>
-                          <FormControl>
-                          <SelectTrigger>
-                              <SelectValue placeholder="Select a bus" />
-                          </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                          {buses.map((bus) => (
-                              <SelectItem key={bus.busId} value={bus.busId}>
-                              {bus.name}
-                              </SelectItem>
-                          ))}
-                          </SelectContent>
-                      </Select>
-                      <FormMessage />
-                      </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="address"
-                  render={({ field }) => (
-                      <FormItem>
-                      <FormLabel>Address</FormLabel>
-                      <FormControl>
-                          <Input placeholder="123 Main St, Anytown" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                      </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="school"
-                  render={({ field }) => (
-                      <FormItem>
-                      <FormLabel>School</FormLabel>
-                      <FormControl>
-                          <Input {...field} disabled />
-                      </FormControl>
-                      <FormMessage />
-                      </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="specialAttention"
-                  render={({ field }) => (
-                      <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4 shadow">
-                      <FormControl>
-                          <Checkbox
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                          />
-                      </FormControl>
-                      <div className="space-y-1 leading-none">
-                          <FormLabel>
-                          Requires Special Attention
-                          </FormLabel>
-                          <FormDescription>
-                          Check this if the student needs special monitoring.
-                          </FormDescription>
-                      </div>
-                      </FormItem>
-                  )}
-                />
-                {specialAttention && (
-                <FormField
+                  />
+                </div>
+
+                {/* Transportation & Location Section */}
+                <div className="space-y-4 pt-2">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Transportation & Location</h3>
+                  <FormField
                     control={form.control}
-                    name="specialInstructions"
+                    name="busId"
                     render={({ field }) => (
-                    <FormItem>
-                        <FormLabel>Special Instructions / Medical Conditions</FormLabel>
+                        <FormItem>
+                        <FormLabel className="text-base">Assign Bus *</FormLabel>
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                            <FormControl>
+                            <SelectTrigger className="h-11">
+                                <SelectValue placeholder="Select a bus" />
+                            </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                            {buses.map((bus) => (
+                                <SelectItem key={bus.busId} value={bus.busId}>
+                                {bus.name}
+                                </SelectItem>
+                            ))}
+                            </SelectContent>
+                        </Select>
+                        <FormMessage />
+                        </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="address"
+                    render={({ field }) => (
+                        <FormItem>
+                        <FormLabel className="text-base">Home Address *</FormLabel>
                         <FormControl>
-                        <Textarea
-                            placeholder="e.g., Allergic to peanuts. Carries an EpiPen."
-                            {...field}
-                        />
+                            <Input placeholder="123 Main St, Anytown, State - 123456" className="h-11" {...field} />
                         </FormControl>
                         <FormMessage />
-                    </FormItem>
+                        </FormItem>
                     )}
-                />
-                )}
+                  />
+                </div>
+
+                {/* Special Care Section */}
+                <div className="space-y-4 pt-2">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Special Care</h3>
+                  <FormField
+                    control={form.control}
+                    name="specialAttention"
+                    render={({ field }) => (
+                        <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-lg border-2 border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-800 p-4">
+                        <FormControl>
+                            <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            className="mt-0.5"
+                            />
+                        </FormControl>
+                        <div className="space-y-1 leading-none">
+                            <FormLabel className="text-base font-semibold">
+                            Requires Special Attention
+                            </FormLabel>
+                            <FormDescription>
+                            Check this if the student needs special monitoring or has medical conditions.
+                            </FormDescription>
+                        </div>
+                        </FormItem>
+                    )}
+                  />
+                  {specialAttention && (
+                  <FormField
+                      control={form.control}
+                      name="specialInstructions"
+                      render={({ field }) => (
+                      <FormItem>
+                          <FormLabel className="text-base">Special Instructions / Medical Conditions *</FormLabel>
+                          <FormControl>
+                          <Textarea
+                              placeholder="e.g., Allergic to peanuts. Carries an EpiPen. Requires assistance boarding."
+                              className="min-h-[100px] resize-none"
+                              {...field}
+                          />
+                          </FormControl>
+                          <FormDescription>Provide detailed information for staff awareness</FormDescription>
+                          <FormMessage />
+                      </FormItem>
+                      )}
+                  />
+                  )}
+                </div>
               </div>
             </ScrollArea>
-             <DialogFooter className="pt-4 flex-shrink-0">
-                <Button type="submit">Create Student</Button>
+             <DialogFooter className="pt-6 flex-shrink-0 border-t">
+                <Button type="button" variant="outline" onClick={() => setIsOpen(false)} className="h-11">
+                  Cancel
+                </Button>
+                <Button type="submit" className="h-11 px-8">
+                  <PlusCircle className="mr-2 h-4 w-4" />
+                  Create Student
+                </Button>
             </DialogFooter>
           </form>
         </Form>

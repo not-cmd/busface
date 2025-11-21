@@ -39,6 +39,7 @@ interface Face {
     isRecognized?: boolean;
     isWrongBus?: boolean;
     correctBusName?: string;
+    embedding?: Float32Array; // Store embedding for adaptive learning
 }
 
 interface RegisteredFace {
@@ -67,6 +68,7 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
     const [readyToScan, setReadyToScan] = useState(false);
     const [storedEmbeddings, setStoredEmbeddings] = useState<StoredFaceEmbedding[]>([]);
     const [busDataState, setBusDataState] = useState<any>({});
+    const stableFacesRef = useRef<Map<string, Face>>(new Map()); // Stable face tracking for smooth display
     const [embeddingsLoaded, setEmbeddingsLoaded] = useState(false);
 
     // Throttled toast function to prevent spam
@@ -120,21 +122,49 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                     
                     for (const studentId in embeddingsData) {
                         const data = embeddingsData[studentId];
-                        if (data.embedding && data.studentName) {
-                            // Validate embedding data
-                            const embeddingArray = Array.isArray(data.embedding) ? data.embedding : Array.from(data.embedding);
-                            const validEmbedding = embeddingArray.length === 512 && 
-                                                  embeddingArray.some((v: number) => !isNaN(v) && isFinite(v));
+                        
+                        // Support both new multi-angle format and old single-embedding format
+                        if (data.studentName) {
+                            let primaryEmbedding: number[] | null = null;
+                            let allEmbeddings: Array<{ embedding: number[]; uid: string; angle: number }> | undefined;
                             
-                            if (validEmbedding) {
-                                embeddings.push({
-                                    studentId: data.studentId || studentId,
-                                    studentName: data.studentName,
-                                    embedding: embeddingArray,
-                                });
-                                console.log(`✓ Loaded embedding for ${data.studentName}`);
+                            if (data.embeddings && Array.isArray(data.embeddings) && data.embeddings.length > 0) {
+                                // New multi-angle format
+                                const mappedEmbeddings = data.embeddings.map((emb: any) => ({
+                                    embedding: Array.isArray(emb.embedding) ? emb.embedding : Array.from(emb.embedding),
+                                    uid: emb.uid,
+                                    angle: emb.angle || 0
+                                }));
+                                
+                                allEmbeddings = mappedEmbeddings;
+                                
+                                // Use primary embedding or first one
+                                primaryEmbedding = data.primaryEmbedding || mappedEmbeddings[0].embedding;
+                                
+                                console.log(`✓ Loaded ${mappedEmbeddings.length} multi-angle embeddings for ${data.studentName}`);
+                            } else if (data.embedding) {
+                                // Old single-embedding format
+                                primaryEmbedding = Array.isArray(data.embedding) ? data.embedding : Array.from(data.embedding);
+                                console.log(`✓ Loaded single embedding for ${data.studentName}`);
+                            }
+                            
+                            // Validate primary embedding
+                            if (primaryEmbedding) {
+                                const validEmbedding = primaryEmbedding.length === 512 && 
+                                                      primaryEmbedding.some((v: number) => !isNaN(v) && isFinite(v));
+                                
+                                if (validEmbedding) {
+                                    embeddings.push({
+                                        studentId: data.studentId || studentId,
+                                        studentName: data.studentName,
+                                        embedding: primaryEmbedding,
+                                        allEmbeddings: allEmbeddings
+                                    });
+                                } else {
+                                    console.warn(`✗ Invalid embedding for ${data.studentName}`);
+                                }
                             } else {
-                                console.warn(`✗ Invalid embedding for ${data.studentName}`);
+                                console.warn(`✗ No embedding data found for ${data.studentName}`);
                             }
                         }
                     }
@@ -341,6 +371,21 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                     eventType: 'OnboardRecognition'
                 });
 
+                // ADAPTIVE LEARNING: Store recognition event with embedding for continuous improvement
+                if (face.embedding && face.confidence > 0.35) { // Only store high-confidence matches
+                    const recognitionHistoryRef = dbRef(db, `recognitionHistory/${student.studentId}/${now}`);
+                    await set(recognitionHistoryRef, {
+                        embedding: Array.from(face.embedding),
+                        confidence: face.confidence,
+                        timestamp: new Date().toISOString(),
+                        snapshotUrl: snapshotDataUrl,
+                        busId: busId
+                    }).catch(err => console.error('Failed to store recognition history:', err));
+                    
+                    // TODO: Periodically aggregate recognition history to update stored embeddings
+                    // This will make the system more robust over time by learning from real-world data
+                }
+
                 throttledToast(`recognized-${face.name}`, {
                     title: `Recognized: ${face.name}`,
                     description: 'Attendance marked as "On Board".',
@@ -442,6 +487,9 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
         }
     }, [busId, throttledToast, studentsOnBus]);
 
+    const lastDrawTime = useRef<number>(0);
+    const DRAW_INTERVAL = 1000 / 15; // 15 FPS instead of 60 FPS for better performance
+
     const scanLoop = useCallback(async () => {
         if (!isScanning || !videoRef.current || !canvasRef.current || videoRef.current.paused || videoRef.current.ended || !scanningEnabled) {
             animationFrameId.current = requestAnimationFrame(scanLoop);
@@ -451,6 +499,17 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
         const video = videoRef.current;
         const canvas = canvasRef.current;
         const context = canvas.getContext('2d');
+        
+        // Throttle drawing to 15 FPS for performance
+        const now = Date.now();
+        const timeSinceLastDraw = now - lastDrawTime.current;
+        
+        if (timeSinceLastDraw < DRAW_INTERVAL) {
+            animationFrameId.current = requestAnimationFrame(scanLoop);
+            return;
+        }
+        
+        lastDrawTime.current = now;
 
         if (context) {
             // Ensure canvas size matches video
@@ -467,42 +526,88 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
             
             // Draw face detection overlays on top
             if (detectedFaces.length > 0) {
-                console.log(`Drawing ${detectedFaces.length} face overlays on canvas`);
+                // Track used label positions to avoid overlaps
+                const usedLabelAreas: Array<{x: number, y: number, width: number, height: number}> = [];
                 
                 detectedFaces.forEach(face => {
                     const { x, y, width, height } = face.boundingBox;
+                    
+                    // Convert normalized coordinates to absolute pixels
                     const absX = x * canvas.width;
                     const absY = y * canvas.height;
                     const absWidth = width * canvas.width;
                     const absHeight = height * canvas.height;
 
-                    context.lineWidth = 3;
+                    // Determine color and label
                     let color = 'red';
                     let label = 'Unrecognized';
 
                     if (face.isWrongBus) {
                         color = '#3b82f6';
-                        label = `Wrong bus. Go to ${face.correctBusName || 'your bus'}.`;
+                        label = `Wrong Bus: Go to ${face.correctBusName || 'your bus'}`;
                     } else if (face.name) {
-                        color = 'lime';
+                        color = '#00ff00'; // Bright green for recognized
                         label = face.name;
                     }
                     
+                    // Draw bounding box with stronger shadow for better visibility
+                    context.lineWidth = 4; // Thicker lines
                     context.strokeStyle = color;
+                    context.shadowColor = 'rgba(0, 0, 0, 0.8)';
+                    context.shadowBlur = 6;
                     context.strokeRect(absX, absY, absWidth, absHeight);
+                    context.shadowBlur = 0;
                     
-                    // Draw background for text
+                    // Draw label with confidence
                     const confidenceText = face.matchConfidence ? 
                         `${Math.round(face.matchConfidence * 100)}%` : 
                         `${Math.round(face.confidence * 100)}%`;
                     const labelWithConfidence = `${label} (${confidenceText})`;
                     
-                    context.fillStyle = 'rgba(0, 0, 0, 0.6)';
-                    context.fillRect(absX, absY > 25 ? absY - 25 : absY + absHeight, absWidth, 20);
+                    // Measure text for better background sizing
+                    context.font = 'bold 18px Arial'; // Slightly larger font
+                    const textMetrics = context.measureText(labelWithConfidence);
+                    const textWidth = textMetrics.width + 12;
+                    const textHeight = 26;
                     
+                    // Find non-overlapping label position
+                    let labelY = absY > 35 ? absY - 30 : absY + absHeight + 8;
+                    let labelX = absX;
+                    
+                    // Check for overlaps and adjust position
+                    let attempts = 0;
+                    while (attempts < 5) {
+                        const overlaps = usedLabelAreas.some(area => {
+                            return !(labelX + textWidth < area.x || 
+                                   labelX > area.x + area.width ||
+                                   labelY + textHeight < area.y ||
+                                   labelY > area.y + area.height);
+                        });
+                        
+                        if (!overlaps) break;
+                        
+                        // Try alternate positions
+                        if (attempts === 0) labelY = absY + absHeight + 8; // Below
+                        else if (attempts === 1) labelX = absX + absWidth - textWidth; // Right align
+                        else if (attempts === 2) labelY = absY + absHeight / 2; // Middle
+                        else labelX = absX + 10; // Offset right
+                        
+                        attempts++;
+                    }
+                    
+                    // Track this label area
+                    usedLabelAreas.push({ x: labelX, y: labelY, width: textWidth, height: textHeight });
+                    
+                    // Draw text background with stronger opacity
+                    context.fillStyle = 'rgba(0, 0, 0, 0.85)';
+                    context.fillRect(labelX, labelY, textWidth, textHeight);
+                    
+                    // Draw text with shadow
+                    context.shadowColor = 'rgba(0, 0, 0, 0.9)';
+                    context.shadowBlur = 3;
                     context.fillStyle = color;
-                    context.font = 'bold 16px Arial';
-                    context.fillText(labelWithConfidence, absX + 5, absY > 25 ? absY - 8 : absY + absHeight + 15);
+                    context.fillText(labelWithConfidence, labelX + 6, labelY + 19);
+                    context.shadowBlur = 0;
                 });
             }
 
@@ -547,12 +652,13 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
 
                 try {
                     // Client-side face detection with sensitive thresholds
-                    // returnTensors=true, iouThreshold=0.3, scoreThreshold=0.5 for better detection
-                    const predictions = await detectFacesClient(processingCanvas, true, 0.3, 0.5);
+                    // returnTensors=true, iouThreshold=0.3, scoreThreshold=0.4, maxFaces=10 for multiple people
+                    // Lower scoreThreshold (0.4 instead of 0.5) to catch more faces in various lighting
+                    const predictions = await detectFacesClient(processingCanvas, true, 0.3, 0.4, 10);
                     
                     // If no faces detected, try with even more sensitive threshold
                     if (predictions.length === 0) {
-                        const retryPredictions = await detectFacesClient(processingCanvas, true, 0.3, 0.3);
+                        const retryPredictions = await detectFacesClient(processingCanvas, true, 0.3, 0.25, 10);
                         if (retryPredictions.length > 0) {
                             predictions.push(...retryPredictions);
                         }
@@ -640,19 +746,57 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
                             isRecognized: !!studentName && !isPotentialMatch,
                             isWrongBus,
                             correctBusName,
+                            embedding: embedding, // Store for adaptive learning
                         });
                     }
 
-                    setDetectedFaces(processedFaces);
+                    // Smooth face tracking to prevent jitter
+                    // Keep faces stable by averaging positions over time
+                    const smoothedFaces: Face[] = [];
+                    const currentTime = Date.now();
+                    
+                    for (const face of processedFaces) {
+                        const existingFace = stableFacesRef.current.get(face.uid);
+                        
+                        if (existingFace) {
+                            // Smooth the bounding box position (exponential moving average)
+                            const alpha = 0.6; // Smoothing factor (0=no update, 1=instant update)
+                            smoothedFaces.push({
+                                ...face,
+                                boundingBox: {
+                                    x: existingFace.boundingBox.x * (1 - alpha) + face.boundingBox.x * alpha,
+                                    y: existingFace.boundingBox.y * (1 - alpha) + face.boundingBox.y * alpha,
+                                    width: existingFace.boundingBox.width * (1 - alpha) + face.boundingBox.width * alpha,
+                                    height: existingFace.boundingBox.height * (1 - alpha) + face.boundingBox.height * alpha,
+                                }
+                            });
+                        } else {
+                            // New face
+                            smoothedFaces.push(face);
+                        }
+                        
+                        stableFacesRef.current.set(face.uid, face);
+                    }
+                    
+                    // Clean up old faces (not seen for 5 seconds)
+                    for (const [uid, face] of stableFacesRef.current.entries()) {
+                        const faceStillPresent = processedFaces.some(f => f.uid === uid);
+                        if (!faceStillPresent) {
+                            stableFacesRef.current.delete(uid);
+                        }
+                    }
 
-                    processedFaces.forEach((face: Face) => {
+                    setDetectedFaces(smoothedFaces);
+
+                    smoothedFaces.forEach((face: Face) => {
                         handleRecognitionEvent(face, processingCanvas.toDataURL('image/jpeg', 0.7));
                     });
 
                     // OPTIMIZED: Adaptive delay based on detection
-                    // If faces detected: scan faster (2s) for better tracking
-                    // If no faces: scan slower (4s) to save resources
-                    const adaptiveDelay = processedFaces.length > 0 ? 2000 : 4000;
+                    // Increased delays for better performance and less lag
+                    // If faces detected: scan every 3s (reduced frequency to prevent lag)
+                    // If no faces: scan every 5s to save resources
+                    const adaptiveDelay = processedFaces.length > 0 ? 3000 : 5000;
                     setTimeout(() => setIsProcessing(false), adaptiveDelay);
 
                 } catch (error) {

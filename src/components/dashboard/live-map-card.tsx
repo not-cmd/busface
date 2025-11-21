@@ -23,6 +23,14 @@ const NavigationControlComponent = dynamic(() => import('react-map-gl').then(mod
   ssr: false 
 });
 
+const FullscreenControlComponent = dynamic(() => import('react-map-gl').then(mod => mod.FullscreenControl), { 
+  ssr: false 
+});
+
+const GeolocateControlComponent = dynamic(() => import('react-map-gl').then(mod => mod.GeolocateControl), { 
+  ssr: false 
+});
+
 interface LiveMapCardProps {
     busId?: string;
 }
@@ -153,14 +161,38 @@ export function LiveMapCard({ busId }: LiveMapCardProps) {
                 {...viewState}
                 onMove={(evt: any) => setViewState(evt.viewState)}
                 style={{width: '100%', height: '100%'}}
-                mapStyle="mapbox://styles/mapbox/streets-v11"
+                mapStyle="mapbox://styles/mapbox/streets-v12"
                 mapboxAccessToken={mapboxToken}
+                attributionControl={false}
             >
-                <NavigationControlComponent position="top-right" />
+                {/* Navigation Controls */}
+                <NavigationControlComponent position="top-right" style={{marginTop: 10, marginRight: 10}} />
+                
+                {/* Fullscreen Control */}
+                <FullscreenControlComponent position="top-right" style={{marginTop: 100, marginRight: 10}} />
+                
+                {/* Geolocate Control - Show user's location */}
+                <GeolocateControlComponent 
+                    position="top-right" 
+                    style={{marginTop: 145, marginRight: 10}}
+                    trackUserLocation={true}
+                    showUserHeading={true}
+                />
+                
+                {/* Bus Markers with enhanced styling */}
                 {locations.map(loc => (
                     <MarkerComponent key={loc.id} longitude={loc.longitude} latitude={loc.latitude}>
-                        <div className="text-primary transform -translate-x-1/2 -translate-y-1/2">
-                            <Bus className="h-8 w-8" />
+                        <div className="relative group cursor-pointer">
+                            {/* Pulsing animation circle */}
+                            <div className="absolute inset-0 animate-ping bg-primary/30 rounded-full scale-150"></div>
+                            {/* Bus icon with shadow */}
+                            <div className="relative bg-primary text-primary-foreground rounded-full p-2 shadow-lg transform transition-transform group-hover:scale-110">
+                                <Bus className="h-6 w-6" />
+                            </div>
+                            {/* Tooltip on hover */}
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-popover text-popover-foreground text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                                Bus {loc.id.split('_')[1]}
+                            </div>
                         </div>
                     </MarkerComponent>
                 ))}
@@ -177,29 +209,45 @@ export function LiveMapCard({ busId }: LiveMapCardProps) {
 
 
   return (
-    <Card>
-        <CardHeader>
+    <Card className="shadow-sm">
+        <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <MapPin className="h-5 w-5 text-primary" />
-                    <CardTitle>Live Bus Tracking</CardTitle>
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-primary/10 rounded-lg">
+                        <MapPin className="h-5 w-5 text-primary" />
+                    </div>
+                    <div>
+                        <CardTitle className="text-xl">Live Bus Tracking</CardTitle>
+                        <CardDescription className="text-sm mt-1">
+                            Real-time location of {busName}
+                        </CardDescription>
+                    </div>
                 </div>
-                <Badge variant={locations.length > 0 ? 'default' : 'secondary'}>
+                <Badge variant={locations.length > 0 ? 'default' : 'secondary'} className="px-3 py-1">
                     <span className={`relative flex h-2 w-2 mr-2 ${locations.length > 0 ? '' : 'hidden'}`}>
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-400"></span>
                     </span>
                     {isLoading ? 'Connecting...' : locations.length > 0 ? 'Live' : 'Offline'}
                 </Badge>
             </div>
-            <CardDescription>
-                Real-time location of {busName}
-            </CardDescription>
         </CardHeader>
       <CardContent>
-        <div className="aspect-video w-full rounded-md overflow-hidden border bg-muted flex items-center justify-center">
+        <div className="aspect-video w-full rounded-lg overflow-hidden border-2 bg-muted flex items-center justify-center shadow-inner">
             {renderContent()}
         </div>
+        {locations.length > 0 && (
+            <div className="mt-4 flex items-center gap-4 text-sm text-muted-foreground">
+                <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-primary rounded-full"></div>
+                    <span>Active Bus</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <MapPin className="h-3 w-3" />
+                    <span>{locations.length} {locations.length === 1 ? 'Bus' : 'Buses'} Tracked</span>
+                </div>
+            </div>
+        )}
       </CardContent>
     </Card>
   )

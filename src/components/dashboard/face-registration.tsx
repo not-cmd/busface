@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
-import { Camera, AlertTriangle, ArrowRight, ArrowLeft, ArrowUp, ArrowDown, CheckCircle, Loader2 } from 'lucide-react';
+import { Camera, AlertTriangle, ArrowRight, ArrowLeft, ArrowUp, ArrowDown, CheckCircle, Loader2, Volume2, VolumeX } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { db } from '@/lib/firebase';
 import { ref as dbRef, set, push } from 'firebase/database';
@@ -28,10 +28,13 @@ interface FaceRegistrationProps {
 export function FaceRegistration({ studentId, studentName }: FaceRegistrationProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const speechSynthesisRef = useRef<SpeechSynthesisUtterance | null>(null);
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentPromptIndex, setCurrentPromptIndex] = useState(0);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const { toast } = useToast();
   const capturedImagesRef = useRef<string[]>([]);
   const isComponentMounted = useRef(true);
@@ -40,6 +43,10 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
     if (videoRef.current?.srcObject) {
       (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
       videoRef.current.srcObject = null;
+    }
+    // Stop any ongoing speech
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
     }
   }, []);
 
@@ -58,7 +65,72 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
         console.log("Audio not available:", e.message);
       });
     }
-  }
+  };
+
+  const triggerHaptic = (intensity: 'light' | 'medium' | 'heavy' = 'medium') => {
+    // Trigger haptic feedback (vibration) if supported
+    if ('vibrate' in navigator) {
+      const patterns = {
+        light: 50,
+        medium: 100,
+        heavy: [100, 50, 100]
+      };
+      navigator.vibrate(patterns[intensity]);
+    }
+  };
+
+  const speak = (text: string) => {
+    // Check if voice is enabled
+    if (!voiceEnabled) return;
+    
+    // Stop any ongoing speech
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+
+    // Create and speak the text
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.9; // Slightly slower for clarity
+      utterance.pitch = 1;
+      utterance.volume = 1;
+      
+      // Try to use a pleasant voice (fallback to default)
+      const voices = window.speechSynthesis.getVoices();
+      const preferredVoice = voices.find(voice => 
+        voice.name.includes('Female') || voice.name.includes('Samantha')
+      );
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
+      
+      // Add event listeners
+      utterance.onstart = () => setIsSpeaking(true);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+      
+      speechSynthesisRef.current = utterance;
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  const showNotification = (title: string, body: string) => {
+    // Show browser notification if permission granted
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(title, {
+        body,
+        icon: '/images/Bus.png',
+        badge: '/images/Bus.png',
+        tag: 'face-registration'
+      });
+    }
+  };
+
+  const requestNotificationPermission = async () => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+  };
 
   const finishRegistration = useCallback(async () => {
     if (!isComponentMounted.current) return;
@@ -67,10 +139,16 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
     
     if(capturedImagesRef.current.length < 5) {
         toast({ variant: 'destructive', title: "Registration Failed", description: "Not enough images were captured. Please try again." });
+        speak("Registration failed. Please try again.");
+        triggerHaptic('heavy');
         return;
     }
 
     setIsSubmitting(true);
+    
+    // Celebrate completion with haptic and voice
+    triggerHaptic('heavy');
+    speak("Perfect! Registration complete. Processing your facial data.");
     
     // Store photos immediately and show success
     const pendingFacesRef = dbRef(db, `pendingFaceRegistrations`);
@@ -94,6 +172,15 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
             className: 'bg-green-100 border-green-300 text-green-800'
         });
 
+        // Show browser notification
+        showNotification(
+            "Face Registration Complete!",
+            `${studentName}'s face has been registered successfully. Processing embeddings...`
+        );
+
+        // Capture photos in a local variable BEFORE clearing the ref
+        const capturedPhotos = [...capturedImagesRef.current];
+
         if(isComponentMounted.current) {
             setIsSubmitting(false);
             setCurrentPromptIndex(0);
@@ -104,10 +191,12 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
         (async () => {
             try {
                 console.log('🔄 Starting background embedding generation...');
+                console.log(`📸 Processing ${capturedPhotos.length} photos`);
                 
-                const embeddingPromises = capturedImagesRef.current.map(async (photoDataUri, index) => {
+                const embeddingPromises = capturedPhotos.map(async (photoDataUri, index) => {
+                  console.log(`🔄 Generating embedding ${index + 1}/${capturedPhotos.length}...`);
                   const result = await generateFaceEmbeddingAction(photoDataUri, studentId, studentName);
-                  console.log(`✅ Embedding ${index + 1}/${capturedImagesRef.current.length} generated`);
+                  console.log(`${result.success ? '✅' : '❌'} Embedding ${index + 1}/${capturedPhotos.length}: ${result.success ? 'Success' : result.error}`);
                   return {
                     photoDataUri,
                     embedding: result.embedding,
@@ -120,15 +209,19 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
 
                 const embeddingResults = await Promise.all(embeddingPromises);
                 const successfulEmbeddings = embeddingResults.filter(result => result.success);
+                const failedEmbeddings = embeddingResults.filter(result => !result.success);
 
                 console.log(`✅ Generated ${successfulEmbeddings.length}/${embeddingResults.length} embeddings`);
+                if (failedEmbeddings.length > 0) {
+                    console.error(`❌ Failed embeddings:`, failedEmbeddings.map(e => e.error));
+                }
 
                 // Update the pending registration with embeddings
                 await set(newPendingRef, {
                     studentId,
                     studentName,
                     status: successfulEmbeddings.length > 0 ? 'pending' : 'failed',
-                    photos: capturedImagesRef.current,
+                    photos: capturedPhotos,
                     embeddings: successfulEmbeddings.map(result => ({
                       photoDataUri: result.photoDataUri,
                       embedding: result.embedding,
@@ -136,10 +229,18 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
                     })),
                     timestamp: new Date().toISOString(),
                     embeddingCount: successfulEmbeddings.length,
-                    processingCompleted: new Date().toISOString()
+                    processingCompleted: new Date().toISOString(),
+                    failedCount: failedEmbeddings.length,
+                    errors: failedEmbeddings.map(e => e.error)
                 });
 
                 console.log('✅ Background processing complete, registration updated');
+                
+                // Notify user of completion
+                showNotification(
+                    "Face Registration Ready!",
+                    `${studentName}'s face embeddings have been processed. Ready for admin review.`
+                );
 
             } catch (error) {
                 console.error("❌ Error in background embedding generation:", error);
@@ -148,7 +249,7 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
                     studentId,
                     studentName,
                     status: 'failed',
-                    photos: capturedImagesRef.current,
+                    photos: capturedPhotos,
                     embeddings: [],
                     timestamp: new Date().toISOString(),
                     embeddingCount: 0,
@@ -187,6 +288,9 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
               context.drawImage(video, 0, 0, canvas.width, canvas.height);
               const dataUrl = canvas.toDataURL('image/jpeg', 0.5); // Reduced quality to 50%
               capturedImagesRef.current.push(dataUrl);
+              
+              // Trigger haptic feedback on capture
+              triggerHaptic('light');
           }
       }
   }, []);
@@ -195,11 +299,15 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
     let interval: NodeJS.Timeout | undefined;
     
     if (isRegistering) {
+        // Speak the current prompt
+        speak(prompts[currentPromptIndex].text);
+        
         if (currentPromptIndex < prompts.length - 1) {
             interval = setInterval(() => {
                 if(isComponentMounted.current) {
                     captureImage();
                     playSound();
+                    triggerHaptic('medium');
                     setCurrentPromptIndex(prev => prev + 1);
                 }
             }, 3000); 
@@ -223,6 +331,9 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
     capturedImagesRef.current = [];
     setHasCameraPermission(null);
 
+    // Request notification permission upfront
+    await requestNotificationPermission();
+
     try {
       // First check if we have permission
       const permissions = await navigator.permissions.query({ name: 'camera' as PermissionName });
@@ -234,6 +345,7 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
           title: 'Camera Access Denied',
           description: 'Please enable camera permissions in your browser settings and refresh the page.',
         });
+        speak("Camera access denied. Please enable camera permissions.");
         return;
       }
 
@@ -251,6 +363,9 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
       }
       
       setHasCameraPermission(true);
+      triggerHaptic('light');
+      speak("Camera ready. Starting face registration.");
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.onplaying = () => {
@@ -259,6 +374,7 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
                 if (isComponentMounted.current) {
                     setIsRegistering(true);
                     playSound();
+                    triggerHaptic('medium');
                 }
              }, 500); // A small delay to ensure rendering
         }
@@ -271,6 +387,7 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
         title: 'Camera Access Denied',
         description: 'Please enable camera permissions in your browser settings.',
       });
+      speak("Error accessing camera. Please check your settings.");
     }
   };
   
@@ -297,17 +414,42 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
 
         {/* Instructions Card */}
         {!isRegistering && !isSubmitting && (
-          <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
-            <h3 className="font-semibold text-sm mb-2 flex items-center gap-2">
-              <span className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs">i</span>
-              How it works
-            </h3>
-            <ul className="text-sm space-y-1 text-muted-foreground ml-8">
-              <li>• Position your face in the center of the camera frame</li>
-              <li>• Follow the on-screen instructions to capture multiple angles</li>
-              <li>• Keep your face well-lit and clearly visible</li>
-              <li>• The process takes about 15 seconds</li>
-            </ul>
+          <div className="mb-6 space-y-4">
+            <div className="p-4 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-semibold text-sm flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs">i</span>
+                  How it works
+                </h3>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setVoiceEnabled(!voiceEnabled)}
+                  className="flex items-center gap-2"
+                >
+                  {voiceEnabled ? (
+                    <>
+                      <Volume2 className="h-4 w-4" />
+                      Voice On
+                    </>
+                  ) : (
+                    <>
+                      <VolumeX className="h-4 w-4" />
+                      Voice Off
+                    </>
+                  )}
+                </Button>
+              </div>
+              <ul className="text-sm space-y-1 text-muted-foreground ml-8">
+                <li>• Position your face in the center of the camera frame</li>
+                <li>• Follow the on-screen instructions to capture multiple angles</li>
+                <li>• Keep your face well-lit and clearly visible</li>
+                <li>• The process takes about 15 seconds</li>
+                {voiceEnabled && (
+                  <li className="text-cyan-600 dark:text-cyan-400 font-medium">• Voice guidance will help you through each step</li>
+                )}
+              </ul>
+            </div>
           </div>
         )}
 
@@ -383,7 +525,19 @@ export function FaceRegistration({ studentId, studentName }: FaceRegistrationPro
             <div className="mt-6 space-y-4">
                 <div className="bg-gradient-to-r from-cyan-50 to-blue-50 dark:from-cyan-950 dark:to-blue-950 p-6 rounded-lg border-2 border-cyan-200 dark:border-cyan-800">
                   <div className="flex items-center justify-between mb-3">
-                    <p className="text-xl font-bold text-cyan-700 dark:text-cyan-300">{currentPrompt.text}</p>
+                    <div className="flex items-center gap-3 flex-1">
+                      <p className="text-xl font-bold text-cyan-700 dark:text-cyan-300">{currentPrompt.text}</p>
+                      {voiceEnabled && isSpeaking && (
+                        <div className="flex items-center gap-1">
+                          <Volume2 className="h-5 w-5 text-cyan-600 dark:text-cyan-400 animate-pulse" />
+                          <div className="flex gap-1">
+                            <div className="w-1 h-4 bg-cyan-500 rounded-full animate-[bounce_0.6s_ease-in-out_infinite]"></div>
+                            <div className="w-1 h-4 bg-cyan-500 rounded-full animate-[bounce_0.6s_ease-in-out_0.1s_infinite]"></div>
+                            <div className="w-1 h-4 bg-cyan-500 rounded-full animate-[bounce_0.6s_ease-in-out_0.2s_infinite]"></div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                     <div className="text-sm font-semibold text-cyan-600 dark:text-cyan-400 bg-white dark:bg-gray-800 px-3 py-1 rounded-full">
                       Step {currentPromptIndex + 1} of {prompts.length}
                     </div>
