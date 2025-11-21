@@ -87,12 +87,20 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
         });
 
         // Load bus data from Firebase
+        // Load bus data in the background
         const busesRef = dbRef(db, 'buses');
-        get(busesRef).then(snapshot => {
-            if (snapshot.exists()) {
-                setBusDataState(snapshot.val());
+        (async () => {
+            try {
+                console.log('🔄 Loading bus data in background...');
+                const snapshot = await get(busesRef);
+                if (snapshot.exists()) {
+                    setBusDataState(snapshot.val());
+                    console.log('✅ Bus data loaded');
+                }
+            } catch (error) {
+                console.error('❌ Error loading bus data:', error);
             }
-        });
+        })();
 
         // Load stored face embeddings in the background for fast client-side matching
         const embeddingsRef = dbRef(db, 'faceEmbeddings');
@@ -145,28 +153,34 @@ export function FacialRecognitionFeed({ busId, studentsOnBus, isPrimarySession =
             }
         })();
 
+        // Load registered faces in the background
         const registeredFacesRef = dbRef(db, 'registeredFaces');
-        const fetchRegisteredFaces = async () => {
-            const snapshot = await get(registeredFacesRef);
-            if (snapshot.exists()) {
-                const allStudentFaces: any = snapshot.val();
-                const faces: RegisteredFace[] = [];
-                
-                for (const studentId in allStudentFaces) {
-                    const studentData = allStudentFaces[studentId];
-                    if (studentData.photos && studentData.photos.length > 0) {
-                        studentData.photos.forEach((photoDataUri: string) => {
-                             faces.push({
-                                name: studentData.name,
-                                photoDataUri: photoDataUri
+        (async () => {
+            try {
+                console.log('🔄 Loading registered faces in background...');
+                const snapshot = await get(registeredFacesRef);
+                if (snapshot.exists()) {
+                    const allStudentFaces: any = snapshot.val();
+                    const faces: RegisteredFace[] = [];
+                    
+                    for (const studentId in allStudentFaces) {
+                        const studentData = allStudentFaces[studentId];
+                        if (studentData.photos && studentData.photos.length > 0) {
+                            studentData.photos.forEach((photoDataUri: string) => {
+                                 faces.push({
+                                    name: studentData.name,
+                                    photoDataUri: photoDataUri
+                                });
                             });
-                        });
+                        }
                     }
+                    setRegisteredFaces(faces);
+                    console.log(`✅ Loaded ${faces.length} registered faces`);
                 }
-                setRegisteredFaces(faces);
+            } catch (error) {
+                console.error('❌ Error loading registered faces:', error);
             }
-        };
-        fetchRegisteredFaces();
+        })();
     }, []);
     
     const requestLocation = useCallback(async () => {
