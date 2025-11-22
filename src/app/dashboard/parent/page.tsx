@@ -27,6 +27,7 @@ import { format } from 'date-fns';
 import { FaceRegistration } from '@/components/dashboard/face-registration';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import ParentAlertsPanel from '@/components/dashboard/parent-alerts-panel';
+import BusProximityAlerts from '@/components/dashboard/bus-proximity-alerts';
 
 
 export default function ParentDashboard() {
@@ -268,6 +269,11 @@ export default function ParentDashboard() {
         </div>
       </header>
       <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
+        {/* Hidden background service to monitor proximity and missed buses */}
+        <div className="hidden">
+          <BusProximityAlerts />
+        </div>
+
         <div className="mb-4">
             <h1 className="text-3xl font-bold flex items-center gap-3">
                 {`${greeting}, Parent of ${student.name}`}

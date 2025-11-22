@@ -91,22 +91,30 @@ export default function BusProximityAlerts() {
       // Get all buses
       const busesRef = ref(db, 'buses');
       const busesSnapshot = await get(busesRef);
-      if (!busesSnapshot.exists()) return;
+      if (!busesSnapshot.exists()) {
+        console.log('No buses found in Firebase');
+        return;
+      }
 
       const buses = busesSnapshot.val();
+      console.log('Checking buses:', Object.keys(buses).length);
 
       // Get all students
       const studentsRef = ref(db, 'students');
       const studentsSnapshot = await get(studentsRef);
-      if (!studentsSnapshot.exists()) return;
+      if (!studentsSnapshot.exists()) {
+        console.log('No students found in Firebase');
+        return;
+      }
 
       const students = studentsSnapshot.val();
+      console.log('Checking students:', Object.keys(students).length);
 
       const now = Date.now();
 
       for (const [busKey, bus] of Object.entries(buses) as [string, any][]) {
         const busLocation: BusLocation = {
-          busId: bus.busId,
+          busId: bus.busId || busKey,
           latitude: bus.currentLocation?.latitude || 0,
           longitude: bus.currentLocation?.longitude || 0,
           timestamp: bus.currentLocation?.timestamp || now,
@@ -114,7 +122,12 @@ export default function BusProximityAlerts() {
         };
 
         // Skip if bus doesn't have valid location
-        if (!busLocation.latitude || !busLocation.longitude) continue;
+        if (!busLocation.latitude || !busLocation.longitude) {
+          console.log(`⚠️ Bus ${busLocation.busId} has no valid location`);
+          continue;
+        }
+
+        console.log(`🚌 Checking bus ${busLocation.busId} at ${busLocation.latitude.toFixed(4)}, ${busLocation.longitude.toFixed(4)}`);
 
         // Detect if bus has stopped (not moved significantly)
         const prevLocation = previousLocations.current[busLocation.busId];
@@ -155,6 +168,8 @@ export default function BusProximityAlerts() {
             status: student.status,
           })) as StudentLocation[];
 
+        console.log(`👥 Found ${busStudents.length} students assigned to bus ${busLocation.busId}`);
+
         for (const student of busStudents) {
           // Get student location (prefer homeLocation, fallback to lat/lng)
           const studentLat = student.homeLocation?.lat || student.latitude;
@@ -171,6 +186,8 @@ export default function BusProximityAlerts() {
             { lat: studentLat, lng: studentLng }
           );
 
+          console.log(`Distance check: ${student.name} (${student.studentId}) <-> Bus ${busLocation.busId}: ${distance.toFixed(2)}km`);
+
           // PROXIMITY ALERT: Bus is within threshold
           if (distance <= PROXIMITY_THRESHOLD_KM) {
             const alertKey = `${student.studentId}-${busLocation.busId}`;
@@ -178,6 +195,14 @@ export default function BusProximityAlerts() {
 
             // Check cooldown
             if (now - lastAlert > ALERT_COOLDOWN_MS) {
+              console.log(`🔔 CREATING PROXIMITY ALERT for ${student.name}:`, {
+                distance: `${distance.toFixed(2)}km`,
+                busId: busLocation.busId,
+                studentId: student.studentId,
+                parentId: student.parentId,
+                alertKey
+              });
+
               // Create proximity alert
               const proximityAlertRef = ref(db, `proximityAlerts/${alertKey}`);
               const alertData: Omit<ProximityAlert, 'id'> = {
@@ -190,6 +215,7 @@ export default function BusProximityAlerts() {
               };
 
               await set(proximityAlertRef, alertData);
+              console.log('✅ Proximity alert saved to Firebase:', alertKey);
 
               // Send notification
               showNotification(
@@ -199,6 +225,8 @@ export default function BusProximityAlerts() {
               );
 
               lastAlertTime.current[alertKey] = now;
+            } else {
+              console.log(`⏰ Cooldown active for ${student.name}, skipping alert (last: ${Math.round((now - lastAlert) / 1000)}s ago)`);
             }
           }
 

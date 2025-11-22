@@ -53,16 +53,23 @@ export default function ParentAlertsPanel({ parentId, studentIds }: ParentAlerts
 
   // Listen for proximity alerts for this parent's students
   useEffect(() => {
+    console.log('👂 Parent panel listening for alerts. StudentIds:', studentIds, 'ParentId:', parentId);
+    
     const proximityAlertsRef = ref(db, 'proximityAlerts');
     const unsubscribe = onValue(proximityAlertsRef, (snapshot) => {
+      console.log('📡 Proximity alerts update received');
       if (snapshot.exists()) {
         const data = snapshot.val();
+        console.log('📦 Raw proximity alerts data:', data);
+        
         const alerts = Object.entries(data)
           .map(([id, alert]: [string, any]) => ({
             id,
             ...alert,
           }))
           .filter((alert) => studentIds.includes(alert.studentId)) as ProximityAlert[];
+
+        console.log('🎯 Filtered alerts for this parent:', alerts);
 
         // Sort by timestamp (newest first)
         alerts.sort((a, b) => b.timestamp - a.timestamp);
@@ -72,16 +79,19 @@ export default function ParentAlertsPanel({ parentId, studentIds }: ParentAlerts
           (alert) => Date.now() - alert.timestamp < 1800000
         );
 
+        console.log('⏰ Recent alerts (last 30 mins):', recentAlerts);
         setProximityAlerts(recentAlerts);
 
         // Show browser notification for new alerts
         recentAlerts.forEach((alert) => {
+          console.log('🔔 Checking alert for notification:', alert);
           if (
             alert.notified &&
             Date.now() - alert.timestamp < 60000 &&
             'Notification' in window &&
             Notification.permission === 'granted'
           ) {
+            console.log('📣 Sending browser notification for:', alert.studentName);
             new Notification('🚌 Bus Nearby!', {
               body: `${alert.studentName}'s bus (${alert.busId}) is approximately ${Math.round(alert.distance * 1000)} meters away. Please be ready!`,
               icon: '/images/Bus.png',
@@ -92,6 +102,7 @@ export default function ParentAlertsPanel({ parentId, studentIds }: ParentAlerts
           }
         });
       } else {
+        console.log('❌ No proximity alerts in Firebase');
         setProximityAlerts([]);
       }
     });
@@ -203,6 +214,11 @@ export default function ParentAlertsPanel({ parentId, studentIds }: ParentAlerts
 
   return (
     <div className="space-y-4">
+      {/* Debug Info */}
+      <div className="text-xs text-gray-500 p-2 bg-gray-50 rounded border">
+        Monitoring: {studentIds.join(', ')} | Proximity Alerts: {proximityAlerts.length} | Missed Bus: {missedBusAlerts.length}
+      </div>
+
       {/* Proximity Alerts */}
       {proximityAlerts.length > 0 && (
         <Card className="border-blue-200 bg-blue-50">
